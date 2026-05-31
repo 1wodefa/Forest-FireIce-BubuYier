@@ -5,1738 +5,888 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>森林冰火人 — 布布 & 一二</title>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body {
-  background: #0a0a1a;
-  display: flex; justify-content: center; align-items: center;
-  height: 100vh; overflow: hidden;
-  font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
-  touch-action: none; -webkit-touch-callout: none;
-  -webkit-user-select: none; user-select: none;
-}
-canvas { display: block; image-rendering: auto; }
-#ui-overlay {
-  position: absolute; top: 0; left: 0; width: 100%; pointer-events: none;
-}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a1a;display:flex;justify-content:center;align-items:center;height:100vh;overflow:hidden;font-family:'Microsoft YaHei','PingFang SC',sans-serif;touch-action:none;-webkit-user-select:none;user-select:none}
+canvas{display:block}
 </style>
 </head>
 <body>
 <canvas id="gc"></canvas>
-
 <script>
 // ============================================================
-// SECTION 0: Constants & Config
+// CONSTANTS
 // ============================================================
-const TILE = 40;
-const GRAVITY = 0.6;
-const FRICTION = 0.82;
-const MAX_SPEED_X = 6;
-const MAX_SPEED_Y = 14;
-const JUMP_VEL = -11;
-const COYOTE_FRAMES = 4;
-const LOGICAL_W = 800;
-const LOGICAL_H = 600;
-
-const canvas = document.getElementById('gc');
-const ctx = canvas.getContext('2d');
-canvas.width = LOGICAL_W;
-canvas.height = LOGICAL_H;
-
-const C = {
-  // Yier (white panda - water/ice)
-  YIER_BODY: '#FEFEFE',
-  YIER_BLACK: '#1a1a1a',
-  YIER_BOW: '#1a1a1a',
-  YIER_EAR_INNER: '#444',
-  // Bubu (brown bear - fire)
-  BUBU_BODY: '#8B5E3C',
-  BUBU_DARK: '#5C3A1E',
-  BUBU_SNOUT: '#D4A574',
-  BUBU_BLUSH: 'rgba(255,140,140,0.45)',
-  BUBU_EAR_INNER: '#C4956A',
-  BUBU_BELLY: '#A0724A',
-  BUBU_NOSE: '#3a1f0a',
-  // Environment
-  WALL: '#4a3728',
-  WALL_TOP: '#6b5240',
-  WALL_SHADOW: '#2e1f14',
-  WATER: '#1e90ff',
-  WATER_SURF: '#4db8ff',
-  LAVA: '#ff4500',
-  LAVA_GLOW: '#ff8c00',
-  ACID: '#32cd32',
-  ACID_GLOW: '#7fff00',
-  BLUE_GEM: '#4169E1',
-  RED_GEM: '#FF4500',
-  GEM_GLOW: '#fff',
-  DOOR_BLUE: '#4a90d9',
-  DOOR_RED: '#e0553d',
-  PLATFORM: '#8B7355',
-  BG: '#1a1a2e',
-  BG_GRID: 'rgba(255,255,255,0.02)',
-  LEVER_BASE: '#666',
-  LEVER_STICK: '#aaa',
-  GATE_BAR: '#888',
-  PUSH_BLOCK: '#6b5240',
-  PUSH_BLOCK_LINE: '#5a4230',
-};
-
-// Tile types
-const AIR = 0, WALL = 1, WATER_T = 2, LAVA_T = 3, ACID_T = 4;
-const BLUE_GEM = 5, RED_GEM = 6;
-const SPAWN_YIER = 7, SPAWN_BUBU = 8;
-const DOOR_YIER = 9, DOOR_BUBU = 10;
-const MOVE_PLAT_H = 11, MOVE_PLAT_V = 12;
-const PUSH_BLOCK_T = 13, LEVER_T = 14, GATE_T = 15;
-
-const CHAR_MAP = {
-  '#': WALL, '~': WATER_T, '^': LAVA_T, '!': ACID_T,
-  'B': BLUE_GEM, 'R': RED_GEM,
-  '1': SPAWN_YIER, '2': SPAWN_BUBU,
-  'D': DOOR_YIER, 'E': DOOR_BUBU,
-  'M': MOVE_PLAT_H, 'V': MOVE_PLAT_V,
-  'P': PUSH_BLOCK_T, 'L': LEVER_T, 'G': GATE_T,
-};
+const TILE=40, GRAVITY=0.55, FRICTION=0.8, MAX_SPEED_X=3.8, MAX_SPEED_Y=13, JUMP_VEL=-10.5;
+const LOGICAL_W=800, LOGICAL_H=600;
+const canvas=document.getElementById('gc'), ctx=canvas.getContext('2d');
+canvas.width=LOGICAL_W; canvas.height=LOGICAL_H;
 
 // ============================================================
-// SECTION 1: Level Data
+// AUDIO ENGINE
 // ============================================================
-const LEVELS = [
-  { // Level 1: Tutorial
-    name: 'Forest Beginning', nameZh: '森林初遇',
-    w: 25, h: 15,
-    map: [
-      '#########################',
-      '#                       #',
-      '#  1     B         D    #',
-      '#  ###  #####  ######   #',
-      '#         R       2     #',
-      '#  ~~~        ^^^     E #',
-      '#  ~~~        ^^^    ###',
-      '#               #      #',
-      '#    B              R   #',
-      '#  #######    #######   #',
-      '#~ ~ ~ ~      ^ ^ ^ ^  #',
-      '#~ ~ ~ ~ #    ^ ^ ^ ^  #',
-      '#        #              #',
-      '#  R            B       #',
-      '#########################',
+class AudioEngine{
+  constructor(){this.ctx=null;this.enabled=true}
+  init(){if(this.ctx)return;try{this.ctx=new(window.AudioContext||window.webkitAudioContext)()}catch(e){this.enabled=false}}
+  play(f,d,t='square',v=0.12){
+    if(!this.ctx||!this.enabled)return;
+    if(this.ctx.state==='suspended')this.ctx.resume();
+    try{const o=this.ctx.createOscillator(),g=this.ctx.createGain();o.type=t;o.frequency.value=f;g.gain.setValueAtTime(v,this.ctx.currentTime);g.gain.exponentialRampToValueAtTime(0.001,this.ctx.currentTime+d);o.connect(g);g.connect(this.ctx.destination);o.start();o.stop(this.ctx.currentTime+d+0.05)}catch(e){}
+  }
+  jump(){this.play(350,0.08,'square',0.1)}
+  collect(){this.play(880,0.08,'sine',0.15);setTimeout(()=>this.play(1100,0.08,'sine',0.15),60)}
+  die(){this.play(100,0.3,'sawtooth',0.18)}
+  complete(){this.play(523,0.1,'sine',0.18);setTimeout(()=>this.play(659,0.1,'sine',0.18),120);setTimeout(()=>this.play(784,0.2,'sine',0.22),240)}
+  menu(){this.play(440,0.08,'sine',0.08)}
+}
+
+// ============================================================
+// INPUT HANDLER
+// ============================================================
+class InputHandler{
+  constructor(){
+    this.keys=new Set();this.justPressed=new Set();this.touches={};
+    window.addEventListener('keydown',e=>{if(!this.keys.has(e.code))this.justPressed.add(e.code);this.keys.add(e.code);if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault()});
+    window.addEventListener('keyup',e=>{this.keys.delete(e.code)});
+    canvas.addEventListener('touchstart',e=>{e.preventDefault();for(const t of e.changedTouches){const r=canvas.getBoundingClientRect();this.touches[t.identifier]={x:(t.clientX-r.left)*(LOGICAL_W/r.width),y:(t.clientY-r.top)*(LOGICAL_H/r.height)}}});
+    canvas.addEventListener('touchend',e=>{for(const t of e.changedTouches)delete this.touches[t.identifier]});
+    canvas.addEventListener('touchmove',e=>{e.preventDefault();for(const t of e.changedTouches){if(!this.touches[t.identifier])continue;const r=canvas.getBoundingClientRect();this.touches[t.identifier].x=(t.clientX-r.left)*(LOGICAL_W/r.width);this.touches[t.identifier].y=(t.clientY-r.top)*(LOGICAL_H/r.height)}});
+    canvas.addEventListener('mousedown',()=>{});
+  }
+  isDown(c){return this.keys.has(c)}
+  wasPressed(c){return this.justPressed.has(c)}
+  endFrame(){this.justPressed.clear()}
+  hasTouch(){return Object.keys(this.touches).length>0}
+  getYierInput(){
+    let l=false,r=false,u=false,d=false;
+    for(const id in this.touches){const t=this.touches[id];if(t.x<LOGICAL_W/2){const dx=t.x-LOGICAL_W/4,dy=t.y-LOGICAL_H*0.68;if(Math.abs(dx)>15||Math.abs(dy)>15){if(Math.abs(dx)>Math.abs(dy)){l=dx<-15;r=dx>15}else{u=dy<-15;d=dy>15}}}}
+    return{l,r,u,d};
+  }
+  getBubuInput(){
+    let l=false,r=false,u=false,d=false;
+    for(const id in this.touches){const t=this.touches[id];if(t.x>=LOGICAL_W/2){const dx=t.x-LOGICAL_W*3/4,dy=t.y-LOGICAL_H*0.68;if(Math.abs(dx)>15||Math.abs(dy)>15){if(Math.abs(dx)>Math.abs(dy)){l=dx<-15;r=dx>15}else{u=dy<-15;d=dy>15}}}}
+    return{l,r,u,d};
+  }
+}
+
+// ============================================================
+// PARTICLE SYSTEM
+// ============================================================
+class Particle{
+  constructor(x,y,vx,vy,life,color,size){this.x=x;this.y=y;this.vx=vx;this.vy=vy;this.life=life;this.maxLife=life;this.color=color;this.size=size}
+  update(){this.x+=this.vx;this.y+=this.vy;this.vy+=0.12;this.life--;this.size*=0.99}
+  get alpha(){return this.life/this.maxLife}
+  get alive(){return this.life>0}
+}
+function spawnP(arr,x,y,n,col,sp=3,life=25,sz=2){for(let i=0;i<n;i++)arr.push(new Particle(x,y,(Math.random()-0.5)*sp*2,(Math.random()-0.7)*sp*3,life+Math.random()*10,col,sz+Math.random()*2))}
+
+// ============================================================
+// LEVEL DATA — water/lava always in pits with walls below
+// ============================================================
+// Encoding: #=wall, ~=water(pit), ^=lava(pit), !=acid, B=blueGem, R=redGem, 1=YierSpawn, 2=BubuSpawn, D=YierDoor, E=BubuDoor, P=pushBlock
+// Every ~, ^, ! tile MUST have # directly below it in the next row.
+// Use single-row water/lava pits only (row of hazard, row of wall below).
+const LEVELS=[
+  { // Level 1: Tutorial — simple movement, single pits
+    name:'Forest Beginning',nameZh:'森林初遇',w:32,h:18,map:[
+      '################################',
+      '#                              #',
+      '#   1                          #',
+      '#   ###               D        #',
+      '#           B        #####     #',
+      '#   B      ###           E     #',
+      '#  ####         ###########    #',
+      '#      #        #              #',
+      '#  R   #   B    #     R        #',
+      '#  #   #  ####  #   ######     #',
+      '#  #   #  #  #  #   #          #',
+      '#  #      #  #      #          #',
+      '#  ########  ########          #',
+      '#                     ##       #',
+      '#           R   2      ##      #',
+      '#  ########  ~~~~  ######^^^  #',
+      '#  ########  ######  #######  #',
+      '################################',
     ]
   },
-  { // Level 2: Crossing Paths
-    name: 'Crossing Paths', nameZh: '交错之路',
-    w: 30, h: 18,
-    map: [
-      '##############################',
-      '#                            #',
-      '#  1        B   B     D      #',
-      '#  ####   #####  #####       #',
-      '#     #             #    E   #',
-      '#  ~  #  ~~~   ^^  #  ####  #',
-      '#  ~  #  ~~~   ^^  #        #',
-      '#  ~         ^^        R    #',
-      '#  ~  ####   ^^  ##### ###  #',
-      '#  ~     #       #   #   #  #',
-      '#  ######    R   #   #   #  #',
-      '#         #####  # 2 #   #  #',
-      '#   B     #   #  #   #   #  #',
-      '#  ###    #   #  #   #   #  #',
-      '#         #   #      #   #  #',
-      '#~ ~ ~ ~~ #   #^ ^ ^^#   #  #',
-      '#~ ~ ~ ~~     #^ ^ ^^#      #',
-      '##############################',
+  { // Level 2: Cooperation — push blocks
+    name:'Crossing Paths',nameZh:'交错之路',w:34,h:20,map:[
+      '##################################',
+      '#                                #',
+      '#   1               D            #',
+      '#   ###    B       #####         #',
+      '#     #   ###          E         #',
+      '#     #    #       ##########    #',
+      '#  B  #    #  R    #             #',
+      '#  #  #    ######  #    R        #',
+      '#  #  #        #   #  ########   #',
+      '#  #  #   P    #   #  #          #',
+      '#  #  ######   #   #  #   B      #',
+      '#  #       #   #   #  #  ####    #',
+      '#  #   R   #   #   #  #  #       #',
+      '#  ####### #   #   #  #  #       #',
+      '#          #   #      #  #       #',
+      '#    B     2   ########  #       #',
+      '#  ######  ######   ^^^^ #       #',
+      '#  ~~~~~~          ###### #       #',
+      '#  ######          ########       #',
+      '##################################',
     ]
   },
-  { // Level 3: Rising Tides
-    name: 'Rising Tides', nameZh: '潮汐上升',
-    w: 30, h: 22,
-    map: [
-      '##############################',
-      '#                            #',
-      '#  1                D        #',
-      '#  #####       ######        #',
-      '#      #       #     E       #',
-      '#  B   #       #   #####     #',
-      '#  #   #   R   #     #       #',
-      '#  #   #####   #     #    R  #',
-      '#  #       #   #   ###  ###  #',
-      '#  #   B   #   #   #    #    #',
-      '#  ### ### #   #   #    #    #',
-      '#    #   # #   #   #    #    #',
-      '#    #   #     #   #    #    #',
-      '#  ~~~  ###  ^^^  # 2  #    #',
-      '#  ~~~       ^^^  ###   #  B #',
-      '#  ~~~  !!!  ^^^        #    #',
-      '#  ~~~  !!!  ^^^   #####    #',
-      '#       !!!           #     #',
-      '#  R           B           #',
-      '#  ####    #######    ##### #',
-      '#~ ~ ~ ~   #^ ^ ^ ^   #~ ~ ~#',
-      '##############################',
+  { // Level 3: Hazards — water, lava, acid
+    name:'Rising Challenges',nameZh:'潮汐挑战',w:34,h:22,map:[
+      '##################################',
+      '#                                #',
+      '#   1               D            #',
+      '#   ####           #####         #',
+      '#       #          #             #',
+      '#   B   #    R     #      E      #',
+      '#   #   #  #####   #    ######   #',
+      '#   #   #  #   #   #    #        #',
+      '#   #   #  #   #   #    #  R     #',
+      '#   #   #  #   #   #    ######   #',
+      '#   #   #  #   #   #             #',
+      '#   #   #  #   #   #     B       #',
+      '#   #   #  #   #   ###########   #',
+      '#   #   #  #   #             #   #',
+      '#   #   #  #   #     P       #   #',
+      '#   #      #   ############ #   #',
+      '#   ########             2  #   #',
+      '#                          ###   #',
+      '#  ~~~~~    !!!!!    ^^^^^        #',
+      '#  #####    #####    #####        #',
+      '#       B                R        #',
+      '##################################',
     ]
   },
-  { // Level 4: Split Chambers
-    name: 'Split Chambers', nameZh: '分室迷局',
-    w: 35, h: 22,
-    map: [
-      '###################################',
-      '#                                 #',
-      '#  1                     D        #',
-      '#  #####              #####       #',
-      '#      #              #           #',
-      '#  B   #    ######    #    E      #',
-      '#  #   #    #    #    #  #####    #',
-      '#  #   #    #    #    #           #',
-      '#  #   # R  #    # R  #     R     #',
-      '#  #   #### #    # ## #  ######   #',
-      '#  #        #    #    #           #',
-      '#  #  ~~~~  #    # ~~~~  ~~~~    #',
-      '#  #  ~~~~      # ~~~~  ~~~~    #',
-      '#  #            #                #',
-      '#  ####  ^^^^  ####  ^^^^  ^^  #',
-      '#       ^^^^        ^^^^  ^^  #',
-      '#   B   ^^^^    R   ^^^^      #',
-      '#  ###  ^^^^  ####  ^^^^  ### #',
-      '#          2 #    #            #',
-      '#  R  #####  #    #  #####  B  #',
-      '#~ ~ ~     #~#~ ~ #^ ^ ^     #~#',
-      '###################################',
+  { // Level 4: Split Chambers — parallel puzzles
+    name:'Split Chambers',nameZh:'分室迷局',w:36,h:24,map:[
+      '####################################',
+      '#                                  #',
+      '#   1                 D            #',
+      '#   ####             #####         #',
+      '#       #            #             #',
+      '#   B   #            #      E      #',
+      '#   #   #    R       #    #####    #',
+      '#   #   #  ######    #    #        #',
+      '#   #   #  #    #    #    #  R     #',
+      '#   #   #  #    #    #    ######   #',
+      '#   #   #  #    #    #         #   #',
+      '#   #   #  #    ######    B    #   #',
+      '#   #   #  #              ##   #   #',
+      '#   #   #  #  ~~~~~~~~~~~~  #   #   #',
+      '#   #   #  #  ############# #   #   #',
+      '#   #   #                  #   #   #',
+      '#   #   ########   ##########   #   #',
+      '#   #       #      #               #',
+      '#   #   P   #  2   #   P     R     #',
+      '#   ########  #######  ##########   #',
+      '#    ^^^^^^^^^^        ~~~~~~~~~~  #',
+      '#    ##########        ##########  #',
+      '#        R               B          #',
+      '####################################',
     ]
   },
-  { // Level 5: Final Trial
-    name: 'Final Trial', nameZh: '最终试炼',
-    w: 40, h: 25,
-    map: [
-      '########################################',
-      '#                                      #',
-      '#   1                                  #',
-      '#   ###       B        D               #',
-      '#     #    ########  #####             #',
-      '#     #    #      #  #   #      E      #',
-      '#  B  #    #  ~~  #  #   #   #######   #',
-      '#  #  #    #  ~~  #  #   #   #         #',
-      '#  #  # R  #  ~~  #  #   #   #    R    #',
-      '#  #  #### #  ~~  #  #   #   #  ####   #',
-      '#  #       #      #  #   #   #         #',
-      '#  #  !!!  ####   #  #   #   #  !!!    #',
-      '#  #  !!!      #  #  #   #   #  !!!    #',
-      '#  #  !!!  B   #  #  #   #   #  !!!    #',
-      '#  #  !!!  ##   #  #   #   #  !!!    #',
-      '#  #            #  #   #   #         #',
-      '#  ####  ^^^^  ###  #####  ####  ~~ #',
-      '#      ^^^^              #     ~~ #',
-      '#  R   ^^^^         R    #     ~~ #',
-      '# ###  ^^^^  ######   #####   ~~ #',
-      '#     ^^^^      #2#   #       ~~ #',
-      '#  B            # #   #   B   ~~ #',
-      '# ###  ~~~~     # #   #  ###     #',
-      '#      ~~~~  R         #    R     #',
-      '#^ ^ ^^~~~~#^ ^ ^ ^#^ #^#^ ^ ^ ^#',
-      '########################################',
+  { // Level 5: Final Trial — all mechanics
+    name:'Final Trial',nameZh:'最终试炼',w:38,h:26,map:[
+      '######################################',
+      '#                                    #',
+      '#   1                                #',
+      '#   ####           D                 #',
+      '#       #         #####              #',
+      '#   B   #         #                  #',
+      '#   #   #   R     #          E       #',
+      '#   #   # #####   #        ######    #',
+      '#   #   #     #   #        #         #',
+      '#   #   #  B  #   #   R    #   B     #',
+      '#   #   #  #  #   #######  #  ###    #',
+      '#   #   #  #  #        #  #  #       #',
+      '#   #   #  #  #   P    #  #  #  R    #',
+      '#   #   #  #  ######## #  #  #####   #',
+      '#   #   #  #           #  #          #',
+      '#   #   #  ##########  #  #   P      #',
+      '#   #   #           #  #  #####      #',
+      '#   #   #    B      #  #       2     #',
+      '#   #   ##########  #  #  ########   #',
+      '#   #            #  #  #  #          #',
+      '#   ##########   #  #  #  #    B     #',
+      '#               #     #             #',
+      '#  ~~~~~~~~~~~ #  ^^^^^^^^^^^^^^^^  #',
+      '#  ########### #  ################  #',
+      '#          R                      #',
+      '######################################',
     ]
   }
 ];
 
 // ============================================================
-// SECTION 2: Audio Engine
+// PLAYER CLASS — detailed character rendering
 // ============================================================
-class AudioEngine {
-  constructor() {
-    this.ctx = null;
-    this.enabled = true;
-    this.initialized = false;
+class Player{
+  constructor(name,el,x,y){
+    this.name=name;this.el=el;this.sx=x;this.sy=y;this.x=x;this.y=y;
+    this.vx=0;this.vy=0;this.w=el==='water'?22:28;this.h=el==='water'?36:34;
+    this.onGround=false;this.alive=true;this.gems=0;this.atDoor=false;
+    this.facing=1;this.animT=0;this.idleT=0;this.jumpHeld=false;
   }
-  init() {
-    if (this.initialized) return;
-    try {
-      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-      this.initialized = true;
-    } catch(e) { this.enabled = false; }
+  respawn(){
+    this.x=this.sx;this.y=this.sy;this.vx=0;this.vy=0;this.alive=true;
+    this.atDoor=false;this.onGround=false;this.gems=0;this.jumpHeld=false;
   }
-  play(freq, dur, type='square', vol=0.15) {
-    if (!this.ctx || !this.enabled) return;
-    if (this.ctx.state === 'suspended') this.ctx.resume();
-    try {
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.type = type;
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(vol, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + dur);
-      osc.connect(gain); gain.connect(this.ctx.destination);
-      osc.start();
-      osc.stop(this.ctx.currentTime + dur + 0.05);
-    } catch(e) {}
-  }
-  jump() { this.play(380, 0.08, 'square', 0.12); }
-  collect() { this.play(880, 0.1, 'sine', 0.18); setTimeout(()=>this.play(1100,0.1,'sine',0.18),60); }
-  die() { this.play(120, 0.35, 'sawtooth', 0.2); }
-  door() { this.play(600, 0.15, 'triangle', 0.18); }
-  complete() {
-    this.play(523,0.12,'sine',0.2);
-    setTimeout(()=>this.play(659,0.12,'sine',0.2),120);
-    setTimeout(()=>this.play(784,0.25,'sine',0.25),240);
-  }
-  menu() { this.play(440,0.1,'sine',0.1); }
-}
-
-// ============================================================
-// SECTION 3: Input Handler
-// ============================================================
-class InputHandler {
-  constructor() {
-    this.keys = new Set();
-    this.justPressed = new Set();
-    this.touches = {};
-    this._onKD = this._onKD.bind(this);
-    this._onKU = this._onKU.bind(this);
-    this._onTS = this._onTS.bind(this);
-    this._onTE = this._onTE.bind(this);
-    this._onTM = this._onTM.bind(this);
-    window.addEventListener('keydown', this._onKD);
-    window.addEventListener('keyup', this._onKU);
-    canvas.addEventListener('touchstart', this._onTS, {passive:false});
-    canvas.addEventListener('touchend', this._onTE, {passive:false});
-    canvas.addEventListener('touchmove', this._onTM, {passive:false});
-    canvas.addEventListener('mousedown', e => { this._audioInit(); });
-    canvas.addEventListener('click', e => { this._audioInit(); });
-  }
-  _audioInit() { /* handled by audio engine directly */ }
-  _onKD(e) {
-    if (!this.keys.has(e.code)) this.justPressed.add(e.code);
-    this.keys.add(e.code);
-    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
-  }
-  _onKU(e) { this.keys.delete(e.code); }
-  _onTS(e) {
-    e.preventDefault();
-    for (const t of e.changedTouches) {
-      const rect = canvas.getBoundingClientRect();
-      const sx = LOGICAL_W / rect.width;
-      const sy = LOGICAL_H / rect.height;
-      const tx = (t.clientX - rect.left) * sx;
-      const ty = (t.clientY - rect.top) * sy;
-      this.touches[t.identifier] = { x: tx, y: ty, startX: tx, startY: ty };
-    }
-  }
-  _onTE(e) {
-    for (const t of e.changedTouches) delete this.touches[t.identifier];
-  }
-  _onTM(e) {
-    e.preventDefault();
-    for (const t of e.changedTouches) {
-      if (!this.touches[t.identifier]) continue;
-      const rect = canvas.getBoundingClientRect();
-      const sx = LOGICAL_W / rect.width;
-      const sy = LOGICAL_H / rect.height;
-      this.touches[t.identifier].x = (t.clientX - rect.left) * sx;
-      this.touches[t.identifier].y = (t.clientY - rect.top) * sy;
-    }
-  }
-  isDown(code) { return this.keys.has(code); }
-  wasPressed(code) { return this.justPressed.has(code); }
-  clearJustPressed() { this.justPressed.clear(); }
-
-  // Mobile virtual controls: Yier (left half), Bubu (right half)
-  getYierInput() {
-    let l=false, r=false, u=false, d=false;
-    for (const id in this.touches) {
-      const t = this.touches[id];
-      if (t.x < LOGICAL_W / 2) {
-        // Left half = Yier's controls (d-pad on left)
-        const cx = LOGICAL_W / 4, cy = LOGICAL_H * 0.65;
-        const dx = t.x - cx, dy = t.y - cy;
-        if (Math.abs(dx) > 20 || Math.abs(dy) > 20) {
-          if (Math.abs(dx) > Math.abs(dy)) { l = dx < -20; r = dx > 20; }
-          else { u = dy < -20; d = dy > 20; }
-        }
-      }
-    }
-    return { l, r, u, d };
-  }
-  getBubuInput() {
-    let l=false, r=false, u=false, d=false;
-    for (const id in this.touches) {
-      const t = this.touches[id];
-      if (t.x >= LOGICAL_W / 2) {
-        const cx = LOGICAL_W * 3 / 4, cy = LOGICAL_H * 0.65;
-        const dx = t.x - cx, dy = t.y - cy;
-        if (Math.abs(dx) > 20 || Math.abs(dy) > 20) {
-          if (Math.abs(dx) > Math.abs(dy)) { l = dx < -20; r = dx > 20; }
-          else { u = dy < -20; d = dy > 20; }
-        }
-      }
-    }
-    return { l, r, u, d };
-  }
-  hasTouchInput() { return Object.keys(this.touches).length > 0; }
-}
-
-// ============================================================
-// SECTION 4: Particle System
-// ============================================================
-class Particle {
-  constructor(x, y, vx, vy, life, color, size=2) {
-    this.x = x; this.y = y; this.vx = vx; this.vy = vy;
-    this.life = life; this.maxLife = life; this.color = color; this.size = size;
-  }
-  update() {
-    this.x += this.vx; this.y += this.vy;
-    this.vy += 0.15;
-    this.life--;
-    this.size *= 0.99;
-  }
-  get alpha() { return this.life / this.maxLife; }
-  get alive() { return this.life > 0; }
-}
-
-function spawnParticles(parts, x, y, count, color, spread=3, life=25, size=2) {
-  for (let i=0; i<count; i++) {
-    const vx = (Math.random()-0.5)*spread*2;
-    const vy = (Math.random()-0.7)*spread*3;
-    parts.push(new Particle(x, y, vx, vy, life+Math.random()*10, color, size+Math.random()*2));
-  }
-}
-
-// ============================================================
-// SECTION 5: Player Class
-// ============================================================
-class Player {
-  constructor(name, element, x, y) {
-    this.name = name;
-    this.element = element; // 'water' or 'fire'
-    this.spawnX = x;
-    this.spawnY = y;
-    this.x = x;
-    this.y = y;
-    this.vx = 0;
-    this.vy = 0;
-    this.w = element==='water'?22:28;
-    this.h = element==='water'?34:32;
-    this.onGround = false;
-    this.alive = true;
-    this.gems = 0;
-    this.atDoor = false;
-    this.coyoteTimer = 0;
-    this.facingRight = true;
-    this.animFrame = 0;
-    this.idleTimer = 0;
-  }
-
-  respawn() {
-    this.x = this.spawnX;
-    this.y = this.spawnY;
-    this.vx = 0;
-    this.vy = 0;
-    this.alive = true;
-    this.atDoor = false;
-    this.onGround = false;
-    this.coyoteTimer = 0;
-    this.gems = 0;
-  }
-
-  update(map, otherPlayer, input, parts) {
-    if (!this.alive) return;
-
+  update(input,parts){
+    if(!this.alive)return;
     // Input
-    let left=false, right=false, up=false;
-    if (this.element === 'water') {
-      left = input.isDown('KeyA'); right = input.isDown('KeyD');
-      up = input.wasPressed('KeyW');
-      if (!left&&!right&&!up) {
-        const yi = input.getYierInput();
-        left=yi.l; right=yi.r; up=yi.u;
-        if (yi.u) up=true;
-      }
-    } else {
-      left = input.isDown('ArrowLeft'); right = input.isDown('ArrowRight');
-      up = input.wasPressed('ArrowUp');
-      if (!left&&!right&&!up) {
-        const bi = input.getBubuInput();
-        left=bi.l; right=bi.r; up=bi.u;
-        if (bi.u) up=true;
-      }
+    let l=false,r=false,up=false,down=false;
+    if(this.el==='water'){
+      l=input.isDown('KeyA');r=input.isDown('KeyD');up=input.wasPressed('KeyW');down=input.isDown('KeyS');
+      if(input.hasTouch()){const yi=input.getYierInput();if(!l&&!r&&!up&&!down){l=yi.l;r=yi.r;up=yi.u;down=yi.d}}
+    }else{
+      l=input.isDown('ArrowLeft');r=input.isDown('ArrowRight');up=input.wasPressed('ArrowUp');down=input.isDown('ArrowDown');
+      if(input.hasTouch()){const bi=input.getBubuInput();if(!l&&!r&&!up&&!down){l=bi.l;r=bi.r;up=bi.u;down=bi.d}}
     }
-
-    // Horizontal movement
-    if (left) { this.vx -= 0.8; this.facingRight = false; }
-    if (right) { this.vx += 0.8; this.facingRight = true; }
-    if (!left && !right) this.vx *= FRICTION;
-    this.vx = Math.max(-MAX_SPEED_X, Math.min(MAX_SPEED_X, this.vx));
-
-    // Jump with coyote time
-    if (this.coyoteTimer > 0) this.coyoteTimer--;
-    if (up && (this.onGround || this.coyoteTimer > 0)) {
-      this.vy = JUMP_VEL;
-      this.onGround = false;
-      this.coyoteTimer = 0;
-      spawnParticles(parts, this.x+this.w/2, this.y+this.h, 5, this.element==='water'?'#aaddff':'#ffaa66', 2, 12, 1.5);
-    }
-    if (up && this.onGround) { this.vy = JUMP_VEL; this.onGround = false; this.coyoteTimer = 0; }
-
+    // Move
+    if(l){this.vx-=0.5;this.facing=-1}if(r){this.vx+=0.5;this.facing=1}
+    if(!l&&!r)this.vx*=FRICTION;
+    this.vx=Math.max(-MAX_SPEED_X,Math.min(MAX_SPEED_X,this.vx));
+    // Jump
+    if(up&&this.onGround){this.vy=JUMP_VEL;this.onGround=false;this.jumpHeld=true;spawnP(parts,this.x+this.w/2,this.y+this.h,6,this.el==='water'?'#aaddff':'#ffaa66',2,12,1.5)}
+    // Variable jump height
+    if(!input.isDown(this.el==='water'?'KeyW':'ArrowUp')&&this.jumpHeld&&this.vy<JUMP_VEL*0.5){this.vy=JUMP_VEL*0.5;this.jumpHeld=false}
+    if(this.onGround)this.jumpHeld=false;
     // Gravity
-    this.vy += GRAVITY;
-    this.vy = Math.min(this.vy, MAX_SPEED_Y);
-
-    // Move X then Y
-    this._moveX(map, otherPlayer, parts);
-    this._moveY(map, otherPlayer, parts);
-
-    // Check if fell off map
-    if (this.y > map.pixelH + 100) this._die(parts);
-
-    // Coyote time start
-    if (!this.onGround && this.coyoteTimer === 0) {
-      // Check if was just on ground
-    }
-    if (this.onGround) this.coyoteTimer = COYOTE_FRAMES;
-
-    // Animation
-    if (!this.onGround) this.animFrame += 0.15;
-    else if (left || right) this.animFrame += 0.2;
-    else { this.animFrame = 0; this.idleTimer++; }
-    this.idleTimer++;
+    this.vy+=GRAVITY;this.vy=Math.min(this.vy,MAX_SPEED_Y);
+    // Move
+    this._moveX();this._moveY();
+    // Fall off map
+    if(this.y>G.map.pixelH+100)this._die(parts);
+    // Anim
+    if(!this.onGround)this.animT+=0.15;
+    else if(l||r)this.animT+=0.18;
+    else{this.animT=0;this.idleT++}
   }
 
-  _moveX(map, otherPlayer, parts) {
-    this.x += this.vx;
-    const left = Math.floor(this.x / TILE);
-    const right = Math.floor((this.x + this.w - 1) / TILE);
-    const top = Math.floor(this.y / TILE);
-    const bottom = Math.floor((this.y + this.h - 1) / TILE);
+  _moveX(){
+    this.x+=this.vx;
+    for(let r=Math.floor(this.y/TILE);r<=Math.floor((this.y+this.h-1)/TILE);r++)
+      for(let c=Math.floor(this.x/TILE);c<=Math.floor((this.x+this.w-1)/TILE);c++)
+        if(G._isSolid(G.map.get(c,r))){if(this.vx>0)this.x=c*TILE-this.w;else if(this.vx<0)this.x=(c+1)*TILE;this.vx=0}
+    // Push blocks
+    for(const b of G.map.pushBlocks){
+      if(!b.active||!this._aabb(b))continue;
+      const d=this.vx>0?1:-1,nx=b.x+d*2;
+      let blk=false;
+      for(let r=Math.floor(b.y/TILE);r<=Math.floor((b.y+b.h-1)/TILE);r++)
+        for(let c=Math.floor(nx/TILE);c<=Math.floor((nx+b.w-1)/TILE);c++)
+          if(G._isSolid(G.map.get(c,r)))blk=true;
+      for(const ob of G.map.pushBlocks){if(ob!==b&&ob.active&&nx<ob.x+ob.w&&nx+b.w>ob.x&&b.y<ob.y+ob.h&&b.y+b.h>ob.y)blk=true}
+      if(blk){if(this.vx>0)this.x=b.x-this.w;else if(this.vx<0)this.x=b.x+b.w;this.vx=0}else b.x+=d*2;
+    }
+  }
 
+  _moveY(){
+    this.y+=this.vy;this.onGround=false;
     // Wall collision
-    for (let row = top; row <= bottom; row++) {
-      for (let col = left; col <= right; col++) {
-        const t = map.getTile(col, row);
-        if (this._isSolid(t, map, col, row)) {
-          if (this.vx > 0) this.x = col * TILE - this.w;
-          else if (this.vx < 0) this.x = (col + 1) * TILE;
-          this.vx = 0;
-        }
-      }
+    for(let r=Math.floor(this.y/TILE);r<=Math.floor((this.y+this.h-1)/TILE);r++)
+      for(let c=Math.floor(this.x/TILE);c<=Math.floor((this.x+this.w-1)/TILE);c++)
+        if(G._isSolid(G.map.get(c,r))){if(this.vy>0){this.y=r*TILE-this.h;this.onGround=true;this.vy=0}else if(this.vy<0){this.y=(r+1)*TILE;this.vy=0}}
+    // Push block vertical
+    for(const b of G.map.pushBlocks){
+      if(!b.active||this.x+this.w<=b.x||this.x>=b.x+b.w)continue;
+      if(this.vy>0&&this.y+this.h>=b.y&&this.y+this.h-this.vy<=b.y+4){this.y=b.y-this.h;this.onGround=true;this.vy=0}
+      else if(this.vy<0&&this.y<=b.y+b.h&&this.y-this.vy>=b.y+b.h-4){this.y=b.y+b.h;this.vy=0}
     }
-
-    // Push block collision & pushing
-    for (const blk of map.pushBlocks) {
-      if (!blk.active) continue;
-      if (!this._overlap(blk)) continue;
-      const dir = this.vx > 0 ? 1 : -1;
-      const pushDist = 2;
-      const newBX = blk.x + dir * pushDist;
-      const bLeft = Math.floor(newBX / TILE);
-      const bRight = Math.floor((newBX + blk.w - 1) / TILE);
-      const bTop = Math.floor(blk.y / TILE);
-      const bBottom = Math.floor((blk.y + blk.h - 1) / TILE);
-      let blocked = false;
-      for (let r=bTop; r<=bBottom; r++)
-        for (let c=bLeft; c<=bRight; c++)
-          if (this._isSolid(map.getTile(c,r), map, c, r)) { blocked=true; break; }
-      // Also check other push blocks
-      for (const ob of map.pushBlocks) {
-        if (ob===blk || !ob.active) continue;
-        if (newBX < ob.x+ob.w && newBX+blk.w > ob.x && blk.y < ob.y+ob.h && blk.y+blk.h > ob.y) { blocked=true; break; }
+    // Hazards
+    for(let r=Math.floor(this.y/TILE);r<=Math.floor((this.y+this.h-1)/TILE);r++)
+      for(let c=Math.floor(this.x/TILE);c<=Math.floor((this.x+this.w-1)/TILE);c++){
+        const t=G.map.get(c,r);
+        if(t===2&&this.el==='fire')this._die(G.particles);
+        if(t===3&&this.el==='water')this._die(G.particles);
+        if(t===4)this._die(G.particles);
       }
-      if (blocked) {
-        // Stop player
-        if (this.vx > 0) this.x = blk.x - this.w;
-        else if (this.vx < 0) this.x = blk.x + blk.w;
-        this.vx = 0;
-      } else {
-        blk.x += dir * pushDist;
-        // Apply push block gravity after move
-        blk.y += 0.5;
-        const bbtm = Math.floor((blk.y+blk.h-1)/TILE);
-        for (let c=Math.floor(blk.x/TILE); c<=Math.floor((blk.x+blk.w-1)/TILE); c++)
-          if (this._isSolid(map.getTile(c,bbtm+1), map, c, bbtm+1)) { blk.y -= 0.5; break; }
-      }
-    }
   }
 
-  _moveY(map, otherPlayer, parts) {
-    this.y += this.vy;
-    this.onGround = false;
-    const left = Math.floor(this.x / TILE);
-    const right = Math.floor((this.x + this.w - 1) / TILE);
-    const top = Math.floor(this.y / TILE);
-    const bottom = Math.floor((this.y + this.h - 1) / TILE);
+  _aabb(b){return this.x<b.x+b.w&&this.x+this.w>b.x&&this.y<b.y+b.h&&this.y+this.h>b.y}
+  _die(p){if(!this.alive)return;this.alive=false;spawnP(p,this.x+this.w/2,this.y+this.h/2,25,this.el==='water'?'#aaddff':'#ff6633',4,30,3)}
 
-    // Wall collision
-    for (let row = top; row <= bottom; row++) {
-      for (let col = left; col <= right; col++) {
-        const t = map.getTile(col, row);
-        if (this._isSolid(t, map, col, row)) {
-          if (this.vy > 0) { this.y = row * TILE - this.h; this.onGround = true; this.vy = 0; }
-          else if (this.vy < 0) { this.y = (row + 1) * TILE; this.vy = 0; }
-        }
-      }
-    }
-
-    // Push block vertical collision (stand on or bump head)
-    for (const blk of map.pushBlocks) {
-      if (!blk.active) continue;
-      if (this.x + this.w <= blk.x || this.x >= blk.x + blk.w) continue;
-      if (this.vy > 0 && this.y + this.h >= blk.y && this.y + this.h - this.vy <= blk.y + 2) {
-        this.y = blk.y - this.h;
-        this.onGround = true;
-        this.vy = 0;
-      } else if (this.vy < 0 && this.y <= blk.y + blk.h && this.y - this.vy >= blk.y + blk.h - 2) {
-        this.y = blk.y + blk.h;
-        this.vy = 0;
-      }
-    }
-
-    // Hazard checks
-    const hTop = Math.floor(this.y / TILE);
-    const hBottom = Math.floor((this.y + this.h - 1) / TILE);
-    const hLeft = Math.floor(this.x / TILE);
-    const hRight = Math.floor((this.x + this.w - 1) / TILE);
-    for (let row = hTop; row <= hBottom; row++) {
-      for (let col = hLeft; col <= hRight; col++) {
-        const t = map.getTile(col, row);
-        if (t === WATER_T && this.element === 'fire') this._die(parts);
-        if (t === LAVA_T && this.element === 'water') this._die(parts);
-        if (t === ACID_T) this._die(parts);
-      }
-    }
-  }
-
-  _isSolid(t, map, col, row) {
-    if (t === WALL || t === PUSH_BLOCK_T) return true;
-    if (t === GATE_T && map.gates) {
-      const g = map.gates.find(g=>g.col===col&&g.row===row);
-      if (g && !g.open) return true;
-    }
-    return false;
-  }
-
-  _overlap(blk) {
-    return this.x < blk.x + blk.w && this.x + this.w > blk.x &&
-           this.y < blk.y + blk.h && this.y + this.h > blk.y;
-  }
-
-  _die(parts) {
-    if (!this.alive) return;
-    this.alive = false;
-    spawnParticles(parts, this.x+this.w/2, this.y+this.h/2, 20,
-      this.element==='water'?'#aaddff':'#ff6633', 4, 30, 3);
-  }
-
-  render(ctx, cam, time) {
-    if (!this.alive) return;
-    const sx = this.x - cam.x;
-    const sy = this.y - cam.y;
-    if (sx < -50 || sx > cam.width+50 || sy < -50 || sy > cam.height+50) return;
-
-    ctx.save();
-    ctx.translate(sx + this.w/2, sy + this.h/2);
-    if (this.element === 'water') this._drawYier(ctx, time);
-    else this._drawBubu(ctx, time);
+  // ========== DETAILED CHARACTER RENDERING ==========
+  render(ctx,cam,t){
+    if(!this.alive)return;
+    const sx=this.x-cam.x,sy=this.y-cam.y;
+    if(sx<-60||sx>cam.width+60||sy<-60||sy>cam.height+60)return;
+    ctx.save();ctx.translate(sx+this.w/2,sy+this.h/2);
+    if(this.el==='water')this._drawYier(ctx,t);
+    else this._drawBubu(ctx,t);
     ctx.restore();
   }
 
-  _drawYier(ctx, time) {
-    const breathe = 1 + Math.sin(time * 0.003 + this.idleTimer * 0.02) * 0.03;
-    ctx.scale(breathe, breathe);
+  // ─── 一二 (YIER) — White Panda ───
+  _drawYier(ctx,t){
+    const b=1+Math.sin(t*0.002+this.idleT*0.015)*0.025;
+    ctx.scale(b,b);
+    const arm=Math.sin(this.animT*0.8)*2.5;
 
-    // Shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.2)';
-    ctx.beginPath(); ctx.ellipse(0, this.h/2 - 2, 10, 3, 0, 0, Math.PI*2); ctx.fill();
+    // ── BODY (white, rounded) ──
+    ctx.fillStyle='#fafafa';
+    ctx.beginPath();ctx.ellipse(0,4,9,13,0,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#ddd';ctx.lineWidth=0.4;
+    ctx.beginPath();ctx.ellipse(0,4,9,13,0,0,Math.PI*2);ctx.stroke();
 
-    // Legs
-    ctx.fillStyle = C.YIER_BLACK;
-    this._roundRect(ctx, -7, this.h/2-9, 5, 9, 2);
-    this._roundRect(ctx, 2, this.h/2-9, 5, 9, 2);
+    // ── LEGS (black, short) ──
+    ctx.fillStyle='#1a1a1a';
+    this._rr(ctx,-6,14,5,8,2.5);this._rr(ctx,1,14,5,8,2.5);
 
-    // Body (white ellipse)
-    ctx.fillStyle = C.YIER_BODY;
-    ctx.beginPath(); ctx.ellipse(0, 0, 10, 14, 0, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#ddd'; ctx.lineWidth = 0.5;
-    ctx.beginPath(); ctx.ellipse(0, 0, 10, 14, 0, 0, Math.PI*2); ctx.stroke();
-
-    // Arms
-    ctx.fillStyle = C.YIER_BODY;
-    ctx.strokeStyle = '#ddd'; ctx.lineWidth = 0.5;
-    const armSwing = Math.sin(this.animFrame) * 3;
-    ctx.save(); ctx.translate(-11, -3+armSwing);
-    ctx.beginPath(); ctx.ellipse(0, 0, 3.5, 7, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    // ── ARMS (white, short stubs) ──
+    ctx.fillStyle='#fafafa';ctx.strokeStyle='#ddd';ctx.lineWidth=0.4;
+    ctx.save();ctx.translate(-10,3+arm);
+    ctx.beginPath();ctx.ellipse(0,0,3.5,6.5,0,0,Math.PI*2);ctx.fill();ctx.stroke();
     ctx.restore();
-    ctx.save(); ctx.translate(11, -3-armSwing);
-    ctx.beginPath(); ctx.ellipse(0, 0, 3.5, 7, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.save();ctx.translate(10,3-arm);
+    ctx.beginPath();ctx.ellipse(0,0,3.5,6.5,0,0,Math.PI*2);ctx.fill();ctx.stroke();
     ctx.restore();
 
-    // Ears (black circles at top)
-    ctx.fillStyle = C.YIER_BLACK;
-    ctx.beginPath(); ctx.arc(-7, -13, 5.5, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(7, -13, 5.5, 0, Math.PI*2); ctx.fill();
+    // ── EARS (black round) ──
+    ctx.fillStyle='#1a1a1a';
+    ctx.beginPath();ctx.arc(-8,-10,5.5,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(8,-10,5.5,0,Math.PI*2);ctx.fill();
 
-    // Head
-    ctx.fillStyle = C.YIER_BODY;
-    ctx.beginPath(); ctx.arc(0, -4, 11.5, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#ddd'; ctx.lineWidth = 0.5;
-    ctx.beginPath(); ctx.arc(0, -4, 11.5, 0, Math.PI*2); ctx.stroke();
+    // ── HEAD (white circle) ──
+    ctx.fillStyle='#fafafa';
+    ctx.beginPath();ctx.arc(0,-3,12,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#ddd';ctx.lineWidth=0.4;
+    ctx.beginPath();ctx.arc(0,-3,12,0,Math.PI*2);ctx.stroke();
 
-    // Eye patches (panda markings)
-    ctx.fillStyle = C.YIER_BLACK;
-    ctx.beginPath(); ctx.ellipse(-4.5, -7, 3.5, 4.5, -0.2, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(4.5, -7, 3.5, 4.5, 0.2, 0, Math.PI*2); ctx.fill();
+    // ── PANDA EYE PATCHES (distinctive black marks) ──
+    ctx.fillStyle='#1a1a1a';
+    ctx.beginPath();ctx.ellipse(-4.5,-6,3.8,5,-0.25,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(4.5,-6,3.8,5,0.25,0,Math.PI*2);ctx.fill();
 
-    // Eyes
-    ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(-4.5, -7.5, 1.8, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(4.5, -7.5, 1.8, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#000';
-    ctx.beginPath(); ctx.arc(-4, -7.5, 1, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(5, -7.5, 1, 0, Math.PI*2); ctx.fill();
+    // ── EYES (white dots inside patches) ──
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(-4.5,-6.5,1.9,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(4.5,-6.5,1.9,0,Math.PI*2);ctx.fill();
+    // pupils
+    ctx.fillStyle='#111';
+    ctx.beginPath();ctx.arc(-3.8,-6.2,0.9,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(5.2,-6.2,0.9,0,Math.PI*2);ctx.fill();
+    // eye highlights
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(-4.2,-6.8,0.5,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(4.8,-6.8,0.5,0,Math.PI*2);ctx.fill();
 
-    // Nose
-    ctx.fillStyle = C.YIER_BLACK;
-    ctx.beginPath(); ctx.arc(0, -3.5, 1.2, 0, Math.PI*2); ctx.fill();
+    // ── NOSE (small black dot) ──
+    ctx.fillStyle='#1a1a1a';
+    ctx.beginPath();ctx.arc(0,-2.2,1.4,0,Math.PI*2);ctx.fill();
 
-    // Mouth
-    ctx.strokeStyle = C.YIER_BLACK; ctx.lineWidth = 0.8;
-    ctx.beginPath(); ctx.arc(0, -2, 2, 0.1, Math.PI-0.1); ctx.stroke();
+    // ── MOUTH (cute smile) ──
+    ctx.strokeStyle='#333';ctx.lineWidth=0.7;
+    ctx.beginPath();ctx.arc(0,-0.8,2.5,0.15,Math.PI-0.15);ctx.stroke();
 
-    // Bow tie
-    ctx.fillStyle = C.YIER_BOW;
-    ctx.beginPath(); ctx.moveTo(0, 5); ctx.lineTo(-5, 2); ctx.lineTo(-5, 8); ctx.closePath(); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(0, 5); ctx.lineTo(5, 2); ctx.lineTo(5, 8); ctx.closePath(); ctx.fill();
-    ctx.beginPath(); ctx.arc(0, 5, 1.8, 0, Math.PI*2); ctx.fill();
+    // ── BOW TIE (distinctive black bow!) ──
+    ctx.fillStyle='#1a1a1a';
+    ctx.beginPath();ctx.moveTo(0,8);ctx.lineTo(-6,4.5);ctx.lineTo(-6,11.5);ctx.closePath();ctx.fill();
+    ctx.beginPath();ctx.moveTo(0,8);ctx.lineTo(6,4.5);ctx.lineTo(6,11.5);ctx.closePath();ctx.fill();
+    ctx.beginPath();ctx.arc(0,8,2.2,0,Math.PI*2);ctx.fill();
 
-    // Element glow
-    ctx.fillStyle = 'rgba(100,180,255,0.25)';
-    ctx.beginPath(); ctx.arc(0, 0, 16, 0, Math.PI*2); ctx.fill();
+    // ── CHEEK BLUSH (subtle) ──
+    ctx.fillStyle='rgba(255,160,160,0.25)';
+    ctx.beginPath();ctx.ellipse(-7.5,-1,2.5,1.8,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(7.5,-1,2.5,1.8,0,0,Math.PI*2);ctx.fill();
   }
 
-  _drawBubu(ctx, time) {
-    const breathe = 1 + Math.sin(time * 0.003 + this.idleTimer * 0.02) * 0.03;
-    ctx.scale(breathe, breathe);
+  // ─── 布布 (BUBU) — Brown Bear ───
+  _drawBubu(ctx,t){
+    const b=1+Math.sin(t*0.002+this.idleT*0.015)*0.025;
+    ctx.scale(b,b);
+    const arm=Math.sin(this.animT*0.8)*2;
 
-    // Shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.2)';
-    ctx.beginPath(); ctx.ellipse(0, this.h/2 - 2, 12, 3.5, 0, 0, Math.PI*2); ctx.fill();
+    // ── BODY (chubby brown oval) ──
+    ctx.fillStyle='#8B5E3C';
+    ctx.beginPath();ctx.ellipse(0,3,14,13,0,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#5C3A1E';ctx.lineWidth=0.5;
+    ctx.beginPath();ctx.ellipse(0,3,14,13,0,0,Math.PI*2);ctx.stroke();
 
-    // Legs (thicker)
-    ctx.fillStyle = C.BUBU_DARK;
-    this._roundRect(ctx, -9, this.h/2-8, 7, 8, 2.5);
-    this._roundRect(ctx, 2, this.h/2-8, 7, 8, 2.5);
+    // ── BELLY PATCH (lighter) ──
+    ctx.fillStyle='#A0724A';
+    ctx.beginPath();ctx.ellipse(0,5,8.5,8,0,0,Math.PI*2);ctx.fill();
 
-    // Body (brown, wider)
-    ctx.fillStyle = C.BUBU_BODY;
-    ctx.beginPath(); ctx.ellipse(0, -1, 13.5, 13, 0, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = C.BUBU_DARK; ctx.lineWidth = 0.6;
-    ctx.beginPath(); ctx.ellipse(0, -1, 13.5, 13, 0, 0, Math.PI*2); ctx.stroke();
+    // ── LEGS (thick brown) ──
+    ctx.fillStyle='#5C3A1E';
+    this._rr(ctx,-9,13,7.5,8,3);this._rr(ctx,1.5,13,7.5,8,3);
 
-    // Belly patch
-    ctx.fillStyle = C.BUBU_BELLY;
-    ctx.beginPath(); ctx.ellipse(0, 2, 8, 7.5, 0, 0, Math.PI*2); ctx.fill();
-
-    // Arms
-    ctx.fillStyle = C.BUBU_BODY;
-    ctx.strokeStyle = C.BUBU_DARK; ctx.lineWidth = 0.5;
-    const armSwing = Math.sin(this.animFrame) * 2.5;
-    ctx.save(); ctx.translate(-14, -1+armSwing);
-    this._roundRect(ctx, -2, -3, 5.5, 8.5, 2.5);
+    // ── ARMS (brown stubby) ──
+    ctx.fillStyle='#8B5E3C';ctx.strokeStyle='#5C3A1E';ctx.lineWidth=0.5;
+    ctx.save();ctx.translate(-15,2+arm);
+    this._rr(ctx,-2.5,-3.5,6,9,2.5);
     ctx.restore();
-    ctx.save(); ctx.translate(14, -1-armSwing);
-    this._roundRect(ctx, -3.5, -3, 5.5, 8.5, 2.5);
+    ctx.save();ctx.translate(15,2-arm);
+    this._rr(ctx,-3.5,-3.5,6,9,2.5);
     ctx.restore();
 
-    // Ears
-    ctx.fillStyle = C.BUBU_BODY;
-    ctx.beginPath(); ctx.arc(-9, -13, 6, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(9, -13, 6, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = C.BUBU_EAR_INNER;
-    ctx.beginPath(); ctx.arc(-9, -13, 3.5, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(9, -13, 3.5, 0, Math.PI*2); ctx.fill();
+    // ── EARS (brown round, lighter inside) ──
+    ctx.fillStyle='#8B5E3C';
+    ctx.beginPath();ctx.arc(-9.5,-10,6.5,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(9.5,-10,6.5,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#C4956A';
+    ctx.beginPath();ctx.arc(-9.5,-10,3.5,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(9.5,-10,3.5,0,Math.PI*2);ctx.fill();
 
-    // Head (larger)
-    ctx.fillStyle = C.BUBU_BODY;
-    ctx.beginPath(); ctx.arc(0, -5, 13.5, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = C.BUBU_DARK; ctx.lineWidth = 0.6;
-    ctx.beginPath(); ctx.arc(0, -5, 13.5, 0, Math.PI*2); ctx.stroke();
+    // ── HEAD (larger brown circle) ──
+    ctx.fillStyle='#8B5E3C';
+    ctx.beginPath();ctx.arc(0,-4,14.5,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#5C3A1E';ctx.lineWidth=0.5;
+    ctx.beginPath();ctx.arc(0,-4,14.5,0,Math.PI*2);ctx.stroke();
 
-    // Snout
-    ctx.fillStyle = C.BUBU_SNOUT;
-    ctx.beginPath(); ctx.ellipse(0, -1, 7, 6, 0, 0, Math.PI*2); ctx.fill();
+    // ── SNOUT/MUZZLE (cream/light brown oval) ──
+    ctx.fillStyle='#D4A574';
+    ctx.beginPath();ctx.ellipse(0,0,7.5,6.2,0,0,Math.PI*2);ctx.fill();
 
-    // Nose
-    ctx.fillStyle = C.BUBU_NOSE;
-    ctx.beginPath(); ctx.ellipse(0, -3, 2.8, 2, 0, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.4)';
-    ctx.beginPath(); ctx.arc(-0.8, -3.8, 0.8, 0, Math.PI*2); ctx.fill();
+    // ── NOSE (dark oval on snout) ──
+    ctx.fillStyle='#3a1f0a';
+    ctx.beginPath();ctx.ellipse(0,-2.2,3,2.2,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,0.35)';
+    ctx.beginPath();ctx.arc(-0.7,-3,0.9,0,Math.PI*2);ctx.fill();
 
-    // Eyes
-    ctx.fillStyle = C.BUBU_NOSE;
-    ctx.beginPath(); ctx.arc(-5, -8, 1.6, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(5, -8, 1.6, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(-4.5, -8.5, 0.6, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(5.5, -8.5, 0.6, 0, Math.PI*2); ctx.fill();
+    // ── EYES (small dark) ──
+    ctx.fillStyle='#3a1f0a';
+    ctx.beginPath();ctx.arc(-5.2,-7.5,1.8,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(5.2,-7.5,1.8,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(-4.6,-8,0.7,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(5.8,-8,0.7,0,Math.PI*2);ctx.fill();
 
-    // Blush
-    ctx.fillStyle = C.BUBU_BLUSH;
-    ctx.beginPath(); ctx.ellipse(-8.5, -3, 3.5, 2.5, 0, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(8.5, -3, 3.5, 2.5, 0, 0, Math.PI*2); ctx.fill();
+    // ── BLUSH (distinctive pink cheeks!) ──
+    ctx.fillStyle='rgba(255,135,135,0.45)';
+    ctx.beginPath();ctx.ellipse(-9,-2,3.8,2.8,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(9,-2,3.8,2.8,0,0,Math.PI*2);ctx.fill();
 
-    // Mouth
-    ctx.strokeStyle = C.BUBU_DARK; ctx.lineWidth = 0.7;
-    ctx.beginPath(); ctx.arc(0, 1.5, 3, 0.1, Math.PI-0.1); ctx.stroke();
-
-    // Element glow
-    ctx.fillStyle = 'rgba(255,140,50,0.2)';
-    ctx.beginPath(); ctx.arc(0, -2, 18, 0, Math.PI*2); ctx.fill();
+    // ── MOUTH ──
+    ctx.strokeStyle='#5C3A1E';ctx.lineWidth=0.7;
+    ctx.beginPath();ctx.arc(0,1.8,3,0.08,Math.PI-0.08);ctx.stroke();
   }
 
-  _roundRect(ctx, x, y, w, h, r) {
-    ctx.beginPath();
-    ctx.moveTo(x+r, y); ctx.lineTo(x+w-r, y);
-    ctx.arcTo(x+w, y, x+w, y+r, r);
-    ctx.lineTo(x+w, y+h-r); ctx.arcTo(x+w, y+h, x+w-r, y+h, r);
-    ctx.lineTo(x+r, y+h); ctx.arcTo(x, y+h, x, y+h-r, r);
-    ctx.lineTo(x, y+r); ctx.arcTo(x, y, x+r, y, r);
-    ctx.closePath(); ctx.fill();
+  _rr(ctx,x,y,w,h,r){
+    ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);
+    ctx.arcTo(x+w,y,x+w,y+r,r);ctx.lineTo(x+w,y+h-r);
+    ctx.arcTo(x+w,y+h,x+w-r,y+h,r);ctx.lineTo(x+r,y+h);
+    ctx.arcTo(x,y+h,x,y+h-r,r);ctx.lineTo(x,y+r);
+    ctx.arcTo(x,y,x+r,y,r);ctx.closePath();ctx.fill();
+    if(ctx.strokeStyle!=='rgba(0,0,0,0)')ctx.stroke();
   }
 }
 
 // ============================================================
-// SECTION 6: Map/Level Class
+// MAP CLASS
 // ============================================================
-class GameMap {
-  constructor(levelData) {
-    this.w = levelData.w;
-    this.h = levelData.h;
-    this.pixelW = this.w * TILE;
-    this.pixelH = this.h * TILE;
-    this.tiles = [];
-    this.gems = [];
-    this.doors = [];
-    this.spawnYier = { x: 0, y: 0 };
-    this.spawnBubu = { x: 0, y: 0 };
-    this.pushBlocks = [];
-    this.levers = [];
-    this.gates = [];
-    this.movingPlatforms = [];
-
-    // Parse map
-    for (let row = 0; row < this.h; row++) {
-      this.tiles[row] = [];
-      const line = levelData.map[row] || '';
-      for (let col = 0; col < this.w; col++) {
-        const ch = col < line.length ? line[col] : ' ';
-        const t = CHAR_MAP[ch] || AIR;
-        this.tiles[row][col] = t;
-
-        const px = col * TILE + TILE/2;
-        const py = row * TILE + TILE/2;
-
-        switch (t) {
-          case SPAWN_YIER:
-            this.spawnYier = { x: col*TILE, y: row*TILE };
-            this.tiles[row][col] = AIR;
-            break;
-          case SPAWN_BUBU:
-            this.spawnBubu = { x: col*TILE, y: row*TILE };
-            this.tiles[row][col] = AIR;
-            break;
-          case BLUE_GEM:
-            this.gems.push({ x: px-8, y: py-8, w:16, h:16, type:'blue', collected:false });
-            this.tiles[row][col] = AIR;
-            break;
-          case RED_GEM:
-            this.gems.push({ x: px-8, y: py-8, w:16, h:16, type:'red', collected:false });
-            this.tiles[row][col] = AIR;
-            break;
-          case DOOR_YIER:
-            this.doors.push({ x: col*TILE, y: row*TILE, w:TILE, h:TILE, type:'yier', active:false });
-            this.tiles[row][col] = AIR; // keep rendering
-            break;
-          case DOOR_BUBU:
-            this.doors.push({ x: col*TILE, y: row*TILE, w:TILE, h:TILE, type:'bubu', active:false });
-            this.tiles[row][col] = AIR;
-            break;
-          case MOVE_PLAT_H:
-            this.movingPlatforms.push({ x: col*TILE, y: row*TILE, w:TILE, h:12, type:'h',
-              startX: col*TILE, endX: col*TILE + TILE*2, speed: 1.5, dir: 1 });
-            this.tiles[row][col] = AIR;
-            break;
-          case MOVE_PLAT_V:
-            this.movingPlatforms.push({ x: col*TILE, y: row*TILE, w:TILE, h:12, type:'v',
-              startY: row*TILE, endY: row*TILE + TILE*3, speed: 1, dir: 1 });
-            this.tiles[row][col] = AIR;
-            break;
-          case PUSH_BLOCK_T:
-            this.pushBlocks.push({ x: col*TILE+2, y: row*TILE+2, w:TILE-4, h:TILE-4, active:true });
-            this.tiles[row][col] = AIR;
-            break;
-          case LEVER_T:
-            this.levers.push({ x: col*TILE, y: row*TILE, w:TILE, h:TILE, activated:false, linkedGate:null });
-            this.tiles[row][col] = AIR;
-            break;
-          case GATE_T:
-            this.gates.push({ x: col*TILE, y: row*TILE, w:TILE, h:TILE, col, row, open:false });
-            this.tiles[row][col] = AIR;
-            break;
-        }
-      }
-    }
-
-    // Link levers to gates (simple: each lever opens nearest unlinked gate)
-    this.gates.forEach((g, i) => {
-      if (i < this.levers.length) this.levers[i].linkedGate = i;
-    });
-  }
-
-  getTile(col, row) {
-    if (col < 0 || col >= this.w || row < 0 || row >= this.h) return WALL;
-    // Check door tiles stored in array
-    for (const d of this.doors) {
-      if (Math.floor(d.x/TILE) === col && Math.floor(d.y/TILE) === row) return AIR;
-    }
-    return this.tiles[row]?.[col] ?? AIR;
-  }
-
-  hasDoorTile(col, row) {
-    for (const d of this.doors) {
-      if (Math.floor(d.x/TILE) === col && Math.floor(d.y/TILE) === row) return d;
-    }
-    return null;
-  }
-
-  update(time, players, parts) {
-    // Update moving platforms
-    for (const mp of this.movingPlatforms) {
-      const prevX = mp.x, prevY = mp.y;
-      if (mp.type === 'h') {
-        mp.x += mp.speed * mp.dir;
-        if (mp.x >= mp.endX || mp.x <= mp.startX) mp.dir *= -1;
-      } else {
-        mp.y += mp.speed * mp.dir;
-        if (mp.y >= mp.endY || mp.y <= mp.startY) mp.dir *= -1;
-      }
-      // Carry players standing on platform
-      for (const p of players) {
-        if (!p.alive) continue;
-        const standingOn = p.y + p.h >= prevY - 2 && p.y + p.h <= prevY + 4 &&
-                           p.x + p.w > prevX + 4 && p.x < prevX + mp.w - 4;
-        if (standingOn) {
-          p.x += mp.x - prevX;
-          p.y += mp.y - prevY;
-        }
-      }
-    }
-
-    // Update levers
-    for (const lv of this.levers) {
-      lv.activated = false;
-      for (const p of players) {
-        if (!p.alive) continue;
-        if (p.x + p.w > lv.x && p.x < lv.x + lv.w &&
-            p.y + p.h > lv.y + TILE/2 && p.y < lv.y + lv.h) {
-          lv.activated = true;
-        }
-      }
-      if (lv.linkedGate !== null && this.gates[lv.linkedGate]) {
-        this.gates[lv.linkedGate].open = lv.activated;
-      }
-    }
-
-    // Check gem collection
-    for (const gem of this.gems) {
-      if (gem.collected) continue;
-      const target = gem.type === 'blue' ? players[0] : players[1];
-      if (!target.alive) continue;
-      const gcx = gem.x + gem.w/2, gcy = gem.y + gem.h/2;
-      const pcx = target.x + target.w/2, pcy = target.y + target.h/2;
-      if (Math.abs(gcx-pcx) < 20 && Math.abs(gcy-pcy) < 24) {
-        gem.collected = true;
-        target.gems++;
-      }
-    }
-
-    // Check door arrival
-    for (const d of this.doors) {
-      const target = d.type === 'yier' ? players[0] : players[1];
-      if (!target.alive) continue;
-      const dcx = d.x + d.w/2, dcy = d.y + d.h/2;
-      const pcx = target.x + target.w/2, pcy = target.y + target.h/2;
-      if (Math.abs(dcx-pcx) < 18 && Math.abs(dcy-pcy) < 22) {
-        d.active = true;
-        if (d.type === 'yier') players[0].atDoor = true;
-        else players[1].atDoor = true;
-      } else {
-        if (d.type === 'yier') players[0].atDoor = false;
-        else players[1].atDoor = false;
+class GameMap{
+  constructor(ld){
+    this.w=ld.w;this.h=ld.h;this.pixelW=this.w*TILE;this.pixelH=this.h*TILE;
+    this.tiles=[];this.gems=[];this.doors=[];this.pushBlocks=[];
+    const cm={'#':1,'~':2,'^':3,'!':4};
+    for(let r=0;r<this.h;r++){
+      this.tiles[r]=[];
+      let ln=(ld.map[r]||'');while(ln.length<ld.w)ln+=' ';ln=ln.slice(0,ld.w);
+      for(let c=0;c<this.w;c++){
+        const ch=c<ln.length?ln[c]:' ';this.tiles[r][c]=cm[ch]||0;
+        const px=c*TILE+TILE/2,py=r*TILE+TILE/2;
+        if(ch==='B'){this.gems.push({x:px-8,y:py-8,w:16,h:16,type:'blue',collected:false});this.tiles[r][c]=0}
+        else if(ch==='R'){this.gems.push({x:px-8,y:py-8,w:16,h:16,type:'red',collected:false});this.tiles[r][c]=0}
+        else if(ch==='1'){this.spawnY={x:c*TILE,y:r*TILE};this.tiles[r][c]=0}
+        else if(ch==='2'){this.spawnB={x:c*TILE,y:r*TILE};this.tiles[r][c]=0}
+        else if(ch==='D'){this.doors.push({x:c*TILE,y:r*TILE,w:TILE,h:TILE,type:'yier',active:false});this.tiles[r][c]=0}
+        else if(ch==='E'){this.doors.push({x:c*TILE,y:r*TILE,w:TILE,h:TILE,type:'bubu',active:false});this.tiles[r][c]=0}
+        else if(ch==='P'){this.pushBlocks.push({x:c*TILE+2,y:r*TILE+2,w:TILE-4,h:TILE-4,active:true});this.tiles[r][c]=0}
       }
     }
   }
+  get(c,r){if(c<0||c>=this.w||r<0||r>=this.h)return 1;return this.tiles[r]?.[c]??0}
 
-  render(ctx, cam, time) {
-    const startCol = Math.max(0, Math.floor(cam.x / TILE) - 1);
-    const endCol = Math.min(this.w, Math.floor((cam.x + cam.width) / TILE) + 1);
-    const startRow = Math.max(0, Math.floor(cam.y / TILE) - 1);
-    const endRow = Math.min(this.h, Math.floor((cam.y + cam.height) / TILE) + 1);
-
-    for (let row = startRow; row < endRow; row++) {
-      for (let col = startCol; col < endCol; col++) {
-        const t = this.tiles[row]?.[col] ?? WALL;
-        const x = col * TILE - cam.x;
-        const y = row * TILE - cam.y;
-        if (x < -TILE || x > cam.width + TILE || y < -TILE || y > cam.height + TILE) continue;
-
-        this._renderTile(ctx, x, y, t, time);
-      }
+  update(t,players){
+    // Gems
+    for(const g of this.gems){
+      if(g.collected)continue;const p=g.type==='blue'?players[0]:players[1];
+      if(!p.alive)continue;
+      if(Math.abs(g.x+g.w/2-(p.x+p.w/2))<18&&Math.abs(g.y+g.h/2-(p.y+p.h/2))<22){g.collected=true;p.gems++}
     }
-
-    // Render door tiles on top
-    for (const d of this.doors) {
-      const x = d.x - cam.x, y = d.y - cam.y;
-      this._renderDoor(ctx, x, y, d, time);
+    // Doors
+    for(const d of this.doors){
+      const p=d.type==='yier'?players[0]:players[1];
+      if(!p.alive)continue;const act=Math.abs(d.x+d.w/2-(p.x+p.w/2))<18&&Math.abs(d.y+d.h/2-(p.y+p.h/2))<22;
+      d.active=act;p.atDoor=act;
     }
+  }
 
-    // Render push blocks
-    for (const blk of this.pushBlocks) {
-      if (!blk.active) continue;
-      const x = blk.x - cam.x, y = blk.y - cam.y;
-      ctx.fillStyle = C.PUSH_BLOCK;
-      ctx.fillRect(x, y, blk.w, blk.h);
-      ctx.strokeStyle = C.PUSH_BLOCK_LINE; ctx.lineWidth = 1.5;
-      ctx.strokeRect(x, y, blk.w, blk.h);
-      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x+blk.w, y+blk.h); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x+blk.w, y); ctx.lineTo(x, y+blk.h); ctx.stroke();
+  render(ctx,cam,t){
+    const sc=Math.max(0,Math.floor(cam.x/TILE)-1),ec=Math.min(this.w,Math.floor((cam.x+cam.width)/TILE)+1);
+    const sr=Math.max(0,Math.floor(cam.y/TILE)-1),er=Math.min(this.h,Math.floor((cam.y+cam.height)/TILE)+1);
+    for(let r=sr;r<er;r++)for(let c=sc;c<ec;c++){
+      const x=c*TILE-cam.x,y=r*TILE-cam.y,ti=this.tiles[r]?.[c]??0;
+      if(ti===1)this._wall(x,y);
+      else if(ti===2)this._water(x,y,t);
+      else if(ti===3)this._lava(x,y,t);
+      else if(ti===4)this._acid(x,y,t);
     }
-
-    // Render moving platforms
-    for (const mp of this.movingPlatforms) {
-      const x = mp.x - cam.x, y = mp.y - cam.y;
-      ctx.fillStyle = C.PLATFORM;
-      ctx.fillRect(x, y, mp.w, mp.h);
-      ctx.fillStyle = '#aa9'; ctx.fillRect(x, y, mp.w, 3);
-      // Direction arrow
-      ctx.fillStyle = '#fff';
-      if (mp.type==='h') {
-        ctx.beginPath(); ctx.moveTo(x+mp.w/2, y+mp.h/2); ctx.lineTo(x+mp.w/2-4, y+mp.h/2-3); ctx.lineTo(x+mp.w/2-4, y+mp.h/2+3); ctx.fill();
-      }
+    // Push blocks
+    for(const b of this.pushBlocks){if(!b.active)continue;
+      const x=b.x-cam.x,y=b.y-cam.y;
+      ctx.fillStyle='#7B6350';ctx.fillRect(x,y,b.w,b.h);
+      ctx.strokeStyle='#5a4230';ctx.lineWidth=1.5;ctx.strokeRect(x,y,b.w,b.h);
+      ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+b.w,y+b.h);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(x+b.w,y);ctx.lineTo(x,y+b.h);ctx.stroke();
     }
-
-    // Render gems
-    for (const gem of this.gems) {
-      if (gem.collected) continue;
-      const x = gem.x - cam.x, y = gem.y - cam.y;
-      this._renderGem(ctx, x, y, gem, time);
-    }
-
-    // Render levers
-    for (const lv of this.levers) {
-      const x = lv.x - cam.x, y = lv.y - cam.y;
-      ctx.fillStyle = C.LEVER_BASE; ctx.fillRect(x+10, y+TILE-8, TILE-20, 8);
-      ctx.fillStyle = lv.activated ? '#0f0' : C.LEVER_STICK;
-      const stickAngle = lv.activated ? -0.5 : 0.5;
-      ctx.save(); ctx.translate(x+TILE/2, y+TILE-8);
-      ctx.rotate(stickAngle);
-      ctx.fillRect(-3, -16, 6, 16);
+    // Gems
+    for(const g of this.gems){
+      if(g.collected)continue;
+      const x=g.x-cam.x,y=g.y-cam.y;
+      ctx.save();ctx.translate(x+g.w/2,y+g.h/2);
+      ctx.rotate(t*0.003);ctx.scale(1+Math.sin(t*0.005+g.x)*0.12,1+Math.sin(t*0.005+g.x)*0.12);
+      ctx.fillStyle=g.type==='blue'?'#4d7cf7':'#ff5530';
+      ctx.beginPath();ctx.moveTo(0,-7.5);ctx.lineTo(5.5,0);ctx.lineTo(0,7.5);ctx.lineTo(-5.5,0);ctx.closePath();ctx.fill();
+      ctx.fillStyle='rgba(255,255,255,0.45)';
+      ctx.beginPath();ctx.moveTo(0,-7.5);ctx.lineTo(0,0);ctx.lineTo(-5.5,0);ctx.closePath();ctx.fill();
+      ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(0,0,2.2,0,Math.PI*2);ctx.fill();
       ctx.restore();
     }
-
-    // Render gates
-    for (const g of this.gates) {
-      const x = g.x - cam.x, y = g.y - cam.y;
-      if (!g.open) {
-        ctx.fillStyle = C.GATE_BAR;
-        for (let i=0; i<5; i++) {
-          ctx.fillRect(x+4+i*7, y+4, 4, TILE-8);
-        }
-      } else {
-        ctx.strokeStyle = '#4a4';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4,4]);
-        ctx.strokeRect(x+2, y+2, TILE-4, TILE-4);
-        ctx.setLineDash([]);
-      }
+    // Doors
+    for(const d of this.doors){
+      const x=d.x-cam.x,y=d.y-cam.y;
+      const glow=d.active?14:6;
+      ctx.save();ctx.shadowColor=d.type==='yier'?'#5b9cf5':'#ff6644';ctx.shadowBlur=glow;
+      ctx.fillStyle=d.type==='yier'?'#5b9cf5':'#ff6644';
+      ctx.fillRect(x+6,y+2,TILE-12,TILE-10);
+      ctx.fillStyle=d.type==='yier'?'#2a60b0':'#b03525';
+      ctx.fillRect(x+11,y+7,TILE-22,TILE-18);
+      ctx.fillStyle=d.type==='yier'?'#5b9cf5':'#ff6644';
+      ctx.beginPath();ctx.arc(x+TILE/2,y+18,TILE/2-6,Math.PI,0);ctx.fill();
+      ctx.restore();
     }
   }
 
-  _renderTile(ctx, x, y, t, time) {
-    switch (t) {
-      case WALL:
-        ctx.fillStyle = C.WALL;
-        ctx.fillRect(x, y, TILE, TILE);
-        ctx.fillStyle = C.WALL_TOP;
-        ctx.fillRect(x, y, TILE, 3);
-        ctx.fillStyle = C.WALL_SHADOW;
-        ctx.fillRect(x, y+TILE-2, TILE, 2);
-        ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-        ctx.lineWidth = 0.5;
-        ctx.strokeRect(x+0.5, y+0.5, TILE-1, TILE-1);
-        break;
-      case WATER_T:
-        const wAlpha = 0.55 + Math.sin(time*0.004 + x*0.05) * 0.12;
-        ctx.fillStyle = `rgba(30,144,255,${wAlpha})`;
-        ctx.fillRect(x, y, TILE, TILE);
-        ctx.fillStyle = C.WATER_SURF;
-        ctx.fillRect(x, y, TILE, 4 + Math.sin(time*0.006 + x*0.03) * 2);
-        // Wave lines
-        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        for (let wx=0; wx<TILE; wx+=2) {
-          const wy = y + 10 + Math.sin(time*0.005 + (x+wx)*0.06) * 4;
-          if (wx===0) ctx.moveTo(x+wx, wy); else ctx.lineTo(x+wx, wy);
-        }
-        ctx.stroke();
-        break;
-      case LAVA_T:
-        const lAlpha = 0.6 + Math.sin(time*0.006 + x*0.04) * 0.15;
-        ctx.fillStyle = `rgba(255,69,0,${lAlpha})`;
-        ctx.fillRect(x, y, TILE, TILE);
-        ctx.fillStyle = C.LAVA_GLOW;
-        ctx.fillRect(x, y, TILE, 4 + Math.sin(time*0.008 + x*0.05) * 3);
-        // Bubble particles
-        for (let b=0; b<2; b++) {
-          const bx = x + 8 + b*20 + Math.sin(time*0.01+b*3) * 6;
-          const by = y + 15 + Math.sin(time*0.015+b*2) * 8;
-          ctx.fillStyle = 'rgba(255,200,50,0.5)';
-          ctx.beginPath(); ctx.arc(bx, by, 2, 0, Math.PI*2); ctx.fill();
-        }
-        break;
-      case ACID_T:
-        ctx.fillStyle = `rgba(50,205,50,0.55)`;
-        ctx.fillRect(x, y, TILE, TILE);
-        ctx.fillStyle = C.ACID_GLOW;
-        ctx.fillRect(x, y, TILE, 3);
-        break;
-      default:
-        // Air - subtle grid lines
-        break;
-    }
+  _wall(x,y){
+    ctx.fillStyle='#4a3728';ctx.fillRect(x,y,TILE,TILE);
+    ctx.fillStyle='#6b5240';ctx.fillRect(x,y,TILE,3);
+    ctx.fillStyle='#2e1f14';ctx.fillRect(x,y+TILE-3,TILE,3);
+    ctx.strokeStyle='rgba(0,0,0,0.3)';ctx.lineWidth=0.5;ctx.strokeRect(x+0.5,y+0.5,TILE-1,TILE-1);
+    // Brick lines
+    ctx.strokeStyle='rgba(0,0,0,0.12)';ctx.lineWidth=0.5;
+    ctx.beginPath();ctx.moveTo(x,y+TILE/2);ctx.lineTo(x+TILE,y+TILE/2);ctx.stroke();
+    for(let bx=x;bx<x+TILE;bx+=TILE/2){ctx.beginPath();ctx.moveTo(bx+TILE/4,y+TILE/2);ctx.lineTo(bx+TILE/4,y+TILE);ctx.stroke()}
   }
 
-  _renderDoor(ctx, x, y, d, time) {
-    const pulse = 1 + Math.sin(time*0.005) * 0.08;
-    const glow = d.active ? 15 : 8;
-    ctx.save();
-    ctx.shadowColor = d.type==='yier'?C.DOOR_BLUE:C.DOOR_RED;
-    ctx.shadowBlur = glow;
-    ctx.fillStyle = d.type==='yier'?C.DOOR_BLUE:C.DOOR_RED;
-    ctx.fillRect(x+6, y+4, TILE-12, TILE-8);
-    ctx.fillStyle = d.type==='yier'?'#2a60b0':'#a03020';
-    ctx.fillRect(x+10, y+8, TILE-20, TILE-16);
-    // Arch
-    ctx.fillStyle = d.type==='yier'?C.DOOR_BLUE:C.DOOR_RED;
-    ctx.beginPath(); ctx.arc(x+TILE/2, y+20, TILE/2-6, Math.PI, 0); ctx.fill();
-    if (d.active) {
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 10px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('✓', x+TILE/2, y+TILE/2+4);
+  _water(x,y,t){
+    const a=0.55+Math.sin(t*0.003+x*0.04)*0.1;
+    ctx.fillStyle=`rgba(30,144,255,${a})`;ctx.fillRect(x,y,TILE,TILE);
+    // Surface
+    ctx.fillStyle='rgba(77,184,255,0.7)';
+    for(let wx=0;wx<TILE;wx+=2){
+      const wy=3+Math.sin(t*0.004+(x+wx)*0.05)*2.5;
+      ctx.fillRect(x+wx,wy,2,2);
     }
-    ctx.restore();
-  }
-
-  _renderGem(ctx, x, y, gem, time) {
-    const rot = time * 0.003;
-    const pulse = 1 + Math.sin(time*0.005 + gem.x) * 0.15;
-    ctx.save();
-    ctx.translate(x+gem.w/2, y+gem.h/2);
-    ctx.rotate(rot);
-    ctx.scale(pulse, pulse);
-
-    // Diamond shape
-    ctx.fillStyle = gem.type==='blue'?C.BLUE_GEM:C.RED_GEM;
+    // Bottom wall edge (water sits in pit)
+    ctx.fillStyle='#4a3728';ctx.fillRect(x,y+TILE-2,TILE,2);
+    // Side ripple lines
+    ctx.strokeStyle='rgba(255,255,255,0.2)';ctx.lineWidth=1;
     ctx.beginPath();
-    ctx.moveTo(0, -8); ctx.lineTo(6, 0); ctx.lineTo(0, 8);
-    ctx.lineTo(-6, 0); ctx.closePath(); ctx.fill();
-
-    // Highlight
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.beginPath();
-    ctx.moveTo(0, -8); ctx.lineTo(0, 0); ctx.lineTo(-6, 0); ctx.closePath(); ctx.fill();
-
-    // Sparkle
-    ctx.fillStyle = C.GEM_GLOW;
-    ctx.beginPath(); ctx.arc(0, 0, 2.5, 0, Math.PI*2); ctx.fill();
-    ctx.restore();
+    for(let i=0;i<=TILE;i+=4){const ry=y+14+Math.sin(t*0.006+(x+i)*0.07)*3;if(i===0)ctx.moveTo(x+i,ry);else ctx.lineTo(x+i,ry)}
+    ctx.stroke();
   }
-}
 
-// ============================================================
-// SECTION 7: Camera
-// ============================================================
-class Camera {
-  constructor(w, h, mapW, mapH) {
-    this.width = w; this.height = h;
-    this.mapW = mapW; this.mapH = mapH;
-    this.x = 0; this.y = 0;
-  }
-  update(players) {
-    // Target midpoint of alive players
-    let cx = 0, cy = 0, count = 0;
-    for (const p of players) {
-      if (!p.alive) continue;
-      cx += p.x + p.w/2; cy += p.y + p.h/2; count++;
+  _lava(x,y,t){
+    const a=0.6+Math.sin(t*0.005+x*0.03)*0.12;
+    ctx.fillStyle=`rgba(255,69,0,${a})`;ctx.fillRect(x,y,TILE,TILE);
+    // Glow top
+    ctx.fillStyle='rgba(255,140,0,0.6)';
+    for(let lx=0;lx<TILE;lx+=3){const ly=2+Math.sin(t*0.007+(x+lx)*0.05)*3;ctx.fillRect(x+lx,ly,4,3)}
+    // Bubbles
+    for(let i=0;i<2;i++){
+      const bx=x+10+i*18+Math.sin(t*0.009+i*3)*7,by=y+18+Math.sin(t*0.012+i*2.5)*6;
+      ctx.fillStyle='rgba(255,200,50,0.45)';ctx.beginPath();ctx.arc(bx,by,2.5,0,Math.PI*2);ctx.fill();
     }
-    if (count > 0) { cx /= count; cy /= count; }
-    else { cx = this.mapW/2; cy = this.mapH/2; }
+    ctx.fillStyle='#4a3728';ctx.fillRect(x,y+TILE-2,TILE,2);
+  }
 
-    const targetX = cx - this.width/2;
-    const targetY = cy - this.height/2 + 30; // slight offset for HUD
-    this.x += (targetX - this.x) * 0.12;
-    this.y += (targetY - this.y) * 0.12;
-    this.x = Math.max(0, Math.min(this.x, this.mapW - this.width));
-    this.y = Math.max(0, Math.min(this.y, this.mapH - this.height));
+  _acid(x,y,t){
+    ctx.fillStyle=`rgba(50,205,50,0.55)`;ctx.fillRect(x,y,TILE,TILE);
+    ctx.fillStyle='rgba(127,255,0,0.5)';
+    for(let ax=0;ax<TILE;ax+=4){const ay=4+Math.sin(t*0.008+(x+ax)*0.05)*2;ctx.fillRect(x+ax,ay,3,2)}
+    ctx.fillStyle='#4a3728';ctx.fillRect(x,y+TILE-2,TILE,2);
   }
 }
 
 // ============================================================
-// SECTION 8: UI Renderer
+// CAMERA
 // ============================================================
-function drawHUD(ctx, game, time) {
-  const p1 = game.players[0], p2 = game.players[1];
-  const lvl = LEVELS[game.currentLevel];
-
-  // Top bar background
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillRect(0, 0, LOGICAL_W, 44);
-
-  // Level name
-  ctx.fillStyle = '#FFD700';
-  ctx.font = 'bold 15px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.textAlign = 'left';
-  ctx.fillText(`第${game.currentLevel+1}关: ${lvl.nameZh}`, 12, 30);
-
-  // Yier gems
-  const gemSize = 10;
-  ctx.fillStyle = '#4169E1';
-  ctx.beginPath(); ctx.moveTo(LOGICAL_W-280, 18); ctx.lineTo(LOGICAL_W-274, 12);
-  ctx.lineTo(LOGICAL_W-268, 18); ctx.lineTo(LOGICAL_W-274, 24); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = '#fff';
-  ctx.font = '13px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.textAlign = 'left';
-  ctx.fillText(`一二: ${p1.gems}`, LOGICAL_W-262, 24);
-
-  // Bubu gems
-  ctx.fillStyle = '#FF4500';
-  ctx.beginPath(); ctx.moveTo(LOGICAL_W-160, 18); ctx.lineTo(LOGICAL_W-154, 12);
-  ctx.lineTo(LOGICAL_W-148, 18); ctx.lineTo(LOGICAL_W-154, 24); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = '#fff';
-  ctx.fillText(`布布: ${p2.gems}`, LOGICAL_W-142, 24);
-
-  // Level gems total
-  const totalBlue = game.map.gems.filter(g=>g.type==='blue').length;
-  const totalRed = game.map.gems.filter(g=>g.type==='red').length;
-  ctx.fillStyle = '#aaa';
-  ctx.font = '10px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.fillText(`/ ${totalBlue}`, LOGICAL_W-262 + ctx.measureText(`一二: ${p1.gems}`).width + 2, 24);
-  ctx.fillText(`/ ${totalRed}`, LOGICAL_W-142 + ctx.measureText(`布布: ${p2.gems}`).width + 2, 24);
-
-  // Controls hint
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  ctx.font = '10px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillText('R=重新开始 | ESC=菜单', LOGICAL_W-12, 40);
+class Camera{
+  constructor(w,h,mw,mh){this.width=w;this.height=h;this.mapW=mw;this.mapH=mh;this.x=0;this.y=0}
+  update(players){
+    let cx=0,cy=0,n=0;
+    for(const p of players){if(!p.alive)continue;cx+=p.x+p.w/2;cy+=p.y+p.h/2;n++}
+    if(n>0){cx/=n;cy/=n}else{cx=this.mapW/2;cy=this.mapH/2}
+    const tx=cx-this.width/2,ty=cy-this.height/2+40;
+    this.x+=(tx-this.x)*0.1;this.y+=(ty-this.y)*0.1;
+    this.x=Math.max(0,Math.min(this.x,this.mapW-this.width));
+    this.y=Math.max(0,Math.min(this.y,this.mapH-this.height));
+  }
 }
 
-function drawMenu(ctx, game) {
-  // Background
-  ctx.fillStyle = 'rgba(10,10,26,0.92)';
-  ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+// ============================================================
+// UI RENDERING
+// ============================================================
+function drawHUD(ctx,g,t){
+  // Bar
+  ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,LOGICAL_W,40);
+  ctx.fillStyle='#FFD700';ctx.font='bold 14px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='left';
+  ctx.fillText(`第${g.lvlIdx+1}关: ${LEVELS[g.lvlIdx].nameZh}`,10,27);
+  const p1=g.players[0],p2=g.players[1];
+  ctx.fillStyle='#5b9cf5';ctx.font='13px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='right';
+  const totalB=g.map.gems.filter(x=>x.type==='blue').length,totalR=g.map.gems.filter(x=>x.type==='red').length;
+  ctx.fillText(`💎 一二: ${p1.gems}/${totalB}`,LOGICAL_W-245,27);
+  ctx.fillStyle='#ff6644';
+  ctx.fillText(`💎 布布: ${p2.gems}/${totalR}`,LOGICAL_W-130,27);
+  ctx.fillStyle='rgba(255,255,255,0.45)';ctx.font='10px "Microsoft YaHei","PingFang SC",sans-serif';
+  ctx.fillText('R=重置 ESC=菜单',LOGICAL_W-8,38);
+}
 
-  // Decorative particles
-  const t = game.time || 0;
-
-  // Title
-  ctx.fillStyle = '#FFD700';
-  ctx.font = 'bold 36px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('森林冰火人', LOGICAL_W/2, 150);
-
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 20px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.fillText('～ 布布 & 一二 ～', LOGICAL_W/2, 190);
+function drawMenu(ctx,g){
+  ctx.fillStyle='rgba(10,10,26,0.93)';ctx.fillRect(0,0,LOGICAL_W,LOGICAL_H);
+  ctx.fillStyle='#FFD700';ctx.font='bold 34px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='center';
+  ctx.fillText('森林冰火人',LOGICAL_W/2,120);
+  ctx.fillStyle='#fff';ctx.font='bold 18px "Microsoft YaHei","PingFang SC",sans-serif';
+  ctx.fillText('～ 布布 & 一二 ～',LOGICAL_W/2,158);
 
   // Draw characters
-  ctx.save(); ctx.translate(LOGICAL_W/2-80, 260);
-  const ptemp = new Player('y','water',0,0);
-  ptemp.idleTimer = t*0.01; ptemp.animFrame = 0;
-  ptemp._drawYier(ctx, t);
-  ctx.restore();
-  ctx.save(); ctx.translate(LOGICAL_W/2+80, 260);
-  const ptemp2 = new Player('b','fire',0,0);
-  ptemp2.idleTimer = t*0.01+10; ptemp2.animFrame = 0;
-  ptemp2._drawBubu(ctx, t);
-  ctx.restore();
+  const t=g.time||0;
+  ctx.save();ctx.translate(LOGICAL_W/2-85,245);
+  const dummy1=new Player('一二','water',0,0);dummy1.idleT=t*60;
+  dummy1._drawYier(ctx,t);ctx.restore();
+  ctx.save();ctx.translate(LOGICAL_W/2+85,245);
+  const dummy2=new Player('布布','fire',0,0);dummy2.idleT=t*60+15;
+  dummy2._drawBubu(ctx,t);ctx.restore();
 
-  // Labels
-  ctx.fillStyle = '#aaddff';
-  ctx.font = '13px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('一二 (冰/水)', LOGICAL_W/2-80, 310);
-  ctx.fillStyle = '#ffaa66';
-  ctx.fillText('布布 (火)', LOGICAL_W/2+80, 310);
+  ctx.fillStyle='#aaddff';ctx.font='12px "Microsoft YaHei","PingFang SC",sans-serif';
+  ctx.fillText('一二 (水/冰) · W A S D',LOGICAL_W/2-85,292);
+  ctx.fillStyle='#ffaa66';
+  ctx.fillText('布布 (火) · ↑ ← ↓ →',LOGICAL_W/2+85,292);
 
-  // Controls info
-  ctx.fillStyle = '#ccc';
-  ctx.font = '13px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.fillText('一二: W A S D | 布布: ↑ ← ↓ →', LOGICAL_W/2, 350);
-  ctx.fillText('双人协作到达出口即可通关！', LOGICAL_W/2, 375);
-
-  // Buttons
-  const btnW = 180, btnH = 48;
-  const btnX = LOGICAL_W/2 - btnW/2;
-  const btn1Y = 410;
-
+  const bx=LOGICAL_W/2-90,bw=180,bh=44;
   // Start button
-  ctx.fillStyle = '#FFD700';
-  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-  drawRoundedButton(ctx, btnX, btn1Y, btnW, btnH, 10);
-  ctx.fillStyle = '#1a1a2e';
-  ctx.font = 'bold 18px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('开始游戏', LOGICAL_W/2, btn1Y+31);
-
-  // Level select button
-  ctx.fillStyle = '#5a5a8a';
-  ctx.strokeStyle = '#aaa'; ctx.lineWidth = 1.5;
-  drawRoundedButton(ctx, btnX, btn1Y+60, btnW, btnH, 10);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 16px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.fillText('关卡选择', LOGICAL_W/2, btn1Y+60+31);
-
-  // Store button positions for click detection
-  game._menuButtons = [
-    { x:btnX, y:btn1Y, w:btnW, h:btnH, action:'start' },
-    { x:btnX, y:btn1Y+60, w:btnW, h:btnH, action:'levelSelect' },
-  ];
-
-  // Footer
-  ctx.fillStyle = 'rgba(255,255,255,0.4)';
-  ctx.font = '11px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.fillText('🐼 一二 © 黄小B | 🐻 布布 © 黄小B | 游戏改编', LOGICAL_W/2, LOGICAL_H-20);
+  ctx.fillStyle='#FFD700';_btn(ctx,bx,360,bw,bh);ctx.fillStyle='#1a1a2e';
+  ctx.font='bold 17px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='center';ctx.fillText('开始游戏',LOGICAL_W/2,388);
+  // Level select
+  ctx.fillStyle='#5a5a8a';_btn(ctx,bx,418,bw,bh);ctx.fillStyle='#fff';
+  ctx.font='bold 15px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('关卡选择',LOGICAL_W/2,446);
+  g._btns=[{x:bx,y:360,w:bw,h:bh,act:'start'},{x:bx,y:418,w:bw,h:bh,act:'levels'}];
+  ctx.fillStyle='rgba(255,255,255,0.35)';ctx.font='10px "Microsoft YaHei","PingFang SC",sans-serif';
+  ctx.fillText('🐼 一二 & 🐻 布布 © 黄小B | 游戏改编',LOGICAL_W/2,LOGICAL_H-15);
 }
 
-function drawRoundedButton(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x+r, y); ctx.lineTo(x+w-r, y);
-  ctx.arcTo(x+w, y, x+w, y+r, r);
-  ctx.lineTo(x+w, y+h-r); ctx.arcTo(x+w, y+h, x+w-r, y+h, r);
-  ctx.lineTo(x+r, y+h); ctx.arcTo(x, y+h, x, y+h-r, r);
-  ctx.lineTo(x, y+r); ctx.arcTo(x, y, x+r, y, r);
-  ctx.closePath(); ctx.fill(); ctx.stroke();
-}
-
-function drawLevelSelect(ctx, game) {
-  ctx.fillStyle = 'rgba(10,10,26,0.92)';
-  ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
-
-  ctx.fillStyle = '#FFD700';
-  ctx.font = 'bold 28px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('关卡选择', LOGICAL_W/2, 60);
-
-  const cols = 3, btnW = 180, btnH = 70, gapX = 30, gapY = 25;
-  const startX = (LOGICAL_W - (cols*btnW + (cols-1)*gapX)) / 2;
-  const startY = 110;
-
-  game._menuButtons = [];
-  for (let i = 0; i < LEVELS.length; i++) {
-    const col = i % cols, row = Math.floor(i / cols);
-    const bx = startX + col*(btnW+gapX);
-    const by = startY + row*(btnH+gapY);
-
-    ctx.fillStyle = i <= game.maxLevelUnlocked ? '#4a4a6a' : '#2a2a3a';
-    ctx.strokeStyle = i <= game.maxLevelUnlocked ? '#aaa' : '#555';
-    ctx.lineWidth = 1.5;
-    drawRoundedButton(ctx, bx, by, btnW, btnH, 10);
-
-    ctx.fillStyle = i <= game.maxLevelUnlocked ? '#fff' : '#666';
-    ctx.font = 'bold 16px "Microsoft YaHei","PingFang SC",sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(`第${i+1}关`, bx+btnW/2, by+28);
-
-    ctx.fillStyle = i <= game.maxLevelUnlocked ? '#FFD700' : '#555';
-    ctx.font = '12px "Microsoft YaHei","PingFang SC",sans-serif';
-    ctx.fillText(LEVELS[i].nameZh, bx+btnW/2, by+50);
-
-    if (i <= game.maxLevelUnlocked) {
-      game._menuButtons.push({ x:bx, y:by, w:btnW, h:btnH, action:'loadLevel', level:i });
-    }
+function drawLevelSelect(ctx,g){
+  ctx.fillStyle='rgba(10,10,26,0.93)';ctx.fillRect(0,0,LOGICAL_W,LOGICAL_H);
+  ctx.fillStyle='#FFD700';ctx.font='bold 26px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='center';
+  ctx.fillText('关卡选择',LOGICAL_W/2,55);
+  const cols=3,bw=180,bh=66,gx=25,gy=20,sx=(LOGICAL_W-(cols*bw+(cols-1)*gx))/2,sy=90;
+  g._btns=[];
+  for(let i=0;i<LEVELS.length;i++){
+    const cx=sx+(i%cols)*(bw+gx),cy=sy+Math.floor(i/cols)*(bh+gy);
+    ctx.fillStyle=i<=g.maxLvl?'#4a4a6a':'#2a2a3a';_btn(ctx,cx,cy,bw,bh);
+    ctx.fillStyle=i<=g.maxLvl?'#fff':'#666';ctx.font='bold 15px "Microsoft YaHei","PingFang SC",sans-serif';
+    ctx.fillText(`第${i+1}关`,cx+bw/2,cy+26);
+    ctx.fillStyle=i<=g.maxLvl?'#FFD700':'#555';ctx.font='11px "Microsoft YaHei","PingFang SC",sans-serif';
+    ctx.fillText(LEVELS[i].nameZh,cx+bw/2,cy+48);
+    if(i<=g.maxLvl)g._btns.push({x:cx,y:cy,w:bw,h:bh,act:'load',lvl:i});
   }
-
-  // Back button
-  const backW = 120, backH = 40;
-  const backX = LOGICAL_W/2 - backW/2, backY = LOGICAL_H - 70;
-  ctx.fillStyle = '#5a5a5a';
-  ctx.strokeStyle = '#aaa'; ctx.lineWidth = 1.5;
-  drawRoundedButton(ctx, backX, backY, backW, backH, 8);
-  ctx.fillStyle = '#fff';
-  ctx.font = '14px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.fillText('返回菜单', LOGICAL_W/2, backY+27);
-  game._menuButtons.push({ x:backX, y:backY, w:backW, h:backH, action:'menu' });
+  // Back
+  const bx=LOGICAL_W/2-60,by=LOGICAL_H-65;
+  ctx.fillStyle='#555';_btn(ctx,bx,by,120,38);
+  ctx.fillStyle='#fff';ctx.font='13px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('返回菜单',LOGICAL_W/2,by+26);
+  g._btns.push({x:bx,y:by,w:120,h:38,act:'menu'});
 }
 
-function drawPause(ctx) {
-  ctx.fillStyle = 'rgba(0,0,0,0.7)';
-  ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 30px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('游戏暂停', LOGICAL_W/2, LOGICAL_H/2 - 10);
-  ctx.font = '16px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.fillText('按 ESC 继续 | 按 R 重新开始', LOGICAL_W/2, LOGICAL_H/2 + 30);
+function _btn(ctx,x,y,w,h){
+  ctx.beginPath();const r=8;
+  ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.arcTo(x+w,y,x+w,y+r,r);
+  ctx.lineTo(x+w,y+h-r);ctx.arcTo(x+w,y+h,x+w-r,y+h,r);
+  ctx.lineTo(x+r,y+h);ctx.arcTo(x,y+h,x,y+h-r,r);
+  ctx.lineTo(x,y+r);ctx.arcTo(x,y,x+r,y,r);
+  ctx.closePath();ctx.fill();ctx.strokeStyle='rgba(255,255,255,0.3)';ctx.lineWidth=1.5;ctx.stroke();
 }
 
-function drawDeath(ctx, timer) {
-  ctx.fillStyle = `rgba(255,0,0,${0.3 + Math.sin(timer*0.1)*0.1})`;
-  ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 24px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('有人受伤了！', LOGICAL_W/2, LOGICAL_H/2);
-  ctx.font = '14px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.fillText('即将重新开始…', LOGICAL_W/2, LOGICAL_H/2+30);
+function drawOverlay(ctx,g){
+  ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,LOGICAL_W,LOGICAL_H);
+  if(g.state==='DEAD'){
+    ctx.fillStyle='#fff';ctx.font='bold 22px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='center';
+    ctx.fillText('💀 有人受伤了！',LOGICAL_W/2,LOGICAL_H/2-10);
+    ctx.font='13px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('即将重新开始…',LOGICAL_W/2,LOGICAL_H/2+20);
+  }else if(g.state==='LVLCOMPLETE'){
+    ctx.fillStyle='#FFD700';ctx.font='bold 28px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='center';
+    ctx.fillText('🎉 通关成功！',LOGICAL_W/2,LOGICAL_H/2-25);
+    ctx.fillStyle='#fff';ctx.font='14px "Microsoft YaHei","PingFang SC",sans-serif';
+    ctx.fillText(`一二 💎${g.players[0].gems}  |  布布 💎${g.players[1].gems}`,LOGICAL_W/2,LOGICAL_H/2+12);
+    ctx.fillText('进入下一关…',LOGICAL_W/2,LOGICAL_H/2+36);
+  }else if(g.state==='PAUSED'){
+    ctx.fillStyle='#fff';ctx.font='bold 26px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='center';
+    ctx.fillText('游戏暂停',LOGICAL_W/2,LOGICAL_H/2-10);
+    ctx.font='14px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('ESC 继续 | R 重新开始',LOGICAL_W/2,LOGICAL_H/2+22);
+  }else if(g.state==='WIN'){
+    ctx.fillStyle='#FFD700';ctx.font='bold 30px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='center';
+    ctx.fillText('🏆 全部通关！',LOGICAL_W/2,LOGICAL_H/2-30);
+    ctx.fillStyle='#fff';ctx.font='16px "Microsoft YaHei","PingFang SC",sans-serif';
+    ctx.fillText('恭喜！布布和一二完成了所有冒险！',LOGICAL_W/2,LOGICAL_H/2+8);
+    ctx.font='13px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('感谢游玩～',LOGICAL_W/2,LOGICAL_H/2+32);
+    const bx=LOGICAL_W/2-80,by=LOGICAL_H/2+50;
+    ctx.fillStyle='#FFD700';_btn(ctx,bx,by,160,42);ctx.fillStyle='#1a1a2e';
+    ctx.font='bold 15px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('返回菜单',LOGICAL_W/2,by+29);
+    g._btns=[{x:bx,y:by,w:160,h:42,act:'menu'}];
+  }
 }
 
-function drawLevelComplete(ctx, game) {
-  ctx.fillStyle = 'rgba(0,0,0,0.6)';
-  ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
-  ctx.fillStyle = '#FFD700';
-  ctx.font = 'bold 30px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('🎉 通关成功！', LOGICAL_W/2, LOGICAL_H/2-30);
-  const p1 = game.players[0], p2 = game.players[1];
-  ctx.fillStyle = '#fff';
-  ctx.font = '16px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.fillText(`一二宝石: ${p1.gems}  |  布布宝石: ${p2.gems}`, LOGICAL_W/2, LOGICAL_H/2+10);
-  ctx.font = '13px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.fillText('正在进入下一关…', LOGICAL_W/2, LOGICAL_H/2+40);
-}
-
-function drawGameComplete(ctx) {
-  ctx.fillStyle = 'rgba(10,10,26,0.92)';
-  ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
-  ctx.fillStyle = '#FFD700';
-  ctx.font = 'bold 34px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('🏆 全部通关！', LOGICAL_W/2, LOGICAL_H/2-40);
-  ctx.fillStyle = '#fff';
-  ctx.font = '18px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.fillText('恭喜！布布和一二完成了所有冒险！', LOGICAL_W/2, LOGICAL_H/2+10);
-  ctx.fillText('感谢游玩～', LOGICAL_W/2, LOGICAL_H/2+40);
-
-  const btnW = 160, btnH = 44;
-  const btnX = LOGICAL_W/2 - btnW/2, btnY = LOGICAL_H/2 + 70;
-  ctx.fillStyle = '#FFD700';
-  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-  drawRoundedButton(ctx, btnX, btnY, btnW, btnH, 10);
-  ctx.fillStyle = '#1a1a2e';
-  ctx.font = 'bold 16px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.fillText('返回菜单', LOGICAL_W/2, btnY+29);
-  game._menuButtons = [{ x:btnX, y:btnY, w:btnW, h:btnH, action:'menu' }];
-}
-
-function drawMobileControls(ctx, game) {
-  if (game.state !== 'PLAYING') return;
-  const input = game.input;
-  if (!input.hasTouchInput()) return;
-
-  // Left D-pad (Yier)
-  const lcx = LOGICAL_W/4, lcy = LOGICAL_H*0.65, lr = 50;
-  ctx.fillStyle = 'rgba(255,255,255,0.12)';
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.arc(lcx, lcy, lr, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-
-  // Direction triangles
-  const triSize = 10;
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  // Up
-  ctx.beginPath(); ctx.moveTo(lcx, lcy-lr+8); ctx.lineTo(lcx-triSize, lcy-lr+8+triSize*1.5); ctx.lineTo(lcx+triSize, lcy-lr+8+triSize*1.5); ctx.fill();
-  // Down
-  ctx.beginPath(); ctx.moveTo(lcx, lcy+lr-8); ctx.lineTo(lcx-triSize, lcy+lr-8-triSize*1.5); ctx.lineTo(lcx+triSize, lcy+lr-8-triSize*1.5); ctx.fill();
-  // Left
-  ctx.beginPath(); ctx.moveTo(lcx-lr+8, lcy); ctx.lineTo(lcx-lr+8+triSize*1.5, lcy-triSize); ctx.lineTo(lcx-lr+8+triSize*1.5, lcy+triSize); ctx.fill();
-  // Right
-  ctx.beginPath(); ctx.moveTo(lcx+lr-8, lcy); ctx.lineTo(lcx+lr-8-triSize*1.5, lcy-triSize); ctx.lineTo(lcx+lr-8-triSize*1.5, lcy+triSize); ctx.fill();
-
-  ctx.fillStyle = 'rgba(255,255,255,0.6)';
-  ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('一二', lcx, lcy+lr+18);
-
-  // Right D-pad (Bubu)
-  const rcx = LOGICAL_W*3/4, rcy = LOGICAL_H*0.65;
-  ctx.fillStyle = 'rgba(255,255,255,0.12)';
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.arc(rcx, rcy, lr, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  ctx.beginPath(); ctx.moveTo(rcx, rcy-lr+8); ctx.lineTo(rcx-triSize, rcy-lr+8+triSize*1.5); ctx.lineTo(rcx+triSize, rcy-lr+8+triSize*1.5); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(rcx, rcy+lr-8); ctx.lineTo(rcx-triSize, rcy+lr-8-triSize*1.5); ctx.lineTo(rcx+triSize, rcy+lr-8-triSize*1.5); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(rcx-lr+8, rcy); ctx.lineTo(rcx-lr+8+triSize*1.5, rcy-triSize); ctx.lineTo(rcx-lr+8+triSize*1.5, rcy+triSize); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(rcx+lr-8, rcy); ctx.lineTo(rcx+lr-8-triSize*1.5, rcy-triSize); ctx.lineTo(rcx+lr-8-triSize*1.5, rcy+triSize); ctx.fill();
-
-  ctx.fillStyle = 'rgba(255,255,255,0.6)';
-  ctx.fillText('布布', rcx, rcy+lr+18);
+function drawTouchCtrls(ctx,g){
+  if(g.state!=='PLAYING'||!g.input.hasTouch())return;
+  const r=45;
+  function dpad(cx,cy,label){
+    ctx.fillStyle='rgba(255,255,255,0.1)';ctx.strokeStyle='rgba(255,255,255,0.25)';ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fill();ctx.stroke();
+    const s=9;
+    ctx.fillStyle='rgba(255,255,255,0.4)';
+    ctx.beginPath();ctx.moveTo(cx,cy-r+7);ctx.lineTo(cx-s,cy-r+7+s*1.5);ctx.lineTo(cx+s,cy-r+7+s*1.5);ctx.fill();
+    ctx.beginPath();ctx.moveTo(cx,cy+r-7);ctx.lineTo(cx-s,cy+r-7-s*1.5);ctx.lineTo(cx+s,cy+r-7-s*1.5);ctx.fill();
+    ctx.beginPath();ctx.moveTo(cx-r+7,cy);ctx.lineTo(cx-r+7+s*1.5,cy-s);ctx.lineTo(cx-r+7+s*1.5,cy+s);ctx.fill();
+    ctx.beginPath();ctx.moveTo(cx+r-7,cy);ctx.lineTo(cx+r-7-s*1.5,cy-s);ctx.lineTo(cx+r-7-s*1.5,cy+s);ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,0.55)';ctx.font='10px sans-serif';ctx.textAlign='center';ctx.fillText(label,cx,cy+r+16);
+  }
+  dpad(LOGICAL_W/4,LOGICAL_H*0.68,'一二');
+  dpad(LOGICAL_W*3/4,LOGICAL_H*0.68,'布布');
 }
 
 // ============================================================
-// SECTION 9: Game State Machine
+// MAIN GAME CLASS
 // ============================================================
-class Game {
-  constructor() {
-    this.state = 'MENU';
-    this.currentLevel = 0;
-    this.maxLevelUnlocked = 0;
-    this.map = null;
-    this.players = [];
-    this.camera = null;
-    this.input = new InputHandler();
-    this.audio = new AudioEngine();
-    this.particles = [];
-    this.time = 0;
-    this.deathTimer = 0;
-    this.completeTimer = 0;
-    this._menuButtons = [];
-    this._lastTimestamp = 0;
-
-    // Click handler for menus
-    canvas.addEventListener('click', (e) => this._onClick(e));
-    canvas.addEventListener('touchend', (e) => {
-      const rect = canvas.getBoundingClientRect();
-      const sx = LOGICAL_W / rect.width;
-      const sy = LOGICAL_H / rect.height;
-      for (const t of e.changedTouches) {
-        const tx = (t.clientX - rect.left) * sx;
-        const ty = (t.clientY - rect.top) * sy;
-        this._handleMenuClick(tx, ty);
-      }
-    });
-
-    // Load saved progress
-    try {
-      const saved = localStorage.getItem('bubuYier_progress');
-      if (saved !== null) this.maxLevelUnlocked = parseInt(saved) || 0;
-    } catch(e) {}
-
-    // Initial map
-    this._loadLevel(this.currentLevel);
-    this.camera = new Camera(LOGICAL_W, LOGICAL_H, this.map.pixelW, this.map.pixelH);
-
-    this._loop = this._loop.bind(this);
-    this._lastTimestamp = performance.now();
-    requestAnimationFrame(this._loop);
+class Game{
+  constructor(){
+    this.state='MENU';this.lvlIdx=0;this.maxLvl=0;this.map=null;this.players=[];
+    this.camera=null;this.input=new InputHandler();this.audio=new AudioEngine();
+    this.particles=[];this.time=0;this.deathT=0;this.completeT=0;this._btns=[];
+    try{const s=localStorage.getItem('bbyier_lvl');if(s)this.maxLvl=parseInt(s)||0}catch(e){}
+    this._loadLvl(0);
+    this.camera=new Camera(LOGICAL_W,LOGICAL_H,this.map.pixelW,this.map.pixelH);
+    canvas.addEventListener('click',e=>{this.audio.init();const r=canvas.getBoundingClientRect();this._click((e.clientX-r.left)*(LOGICAL_W/r.width),(e.clientY-r.top)*(LOGICAL_H/r.height))});
+    canvas.addEventListener('touchend',e=>{const r=canvas.getBoundingClientRect();for(const t of e.changedTouches)this._click((t.clientX-r.left)*(LOGICAL_W/r.width),(t.clientY-r.top)*(LOGICAL_H/r.height))});
+    this._lt=performance.now();
+    requestAnimationFrame(t=>this._loop(t));
   }
 
-  _loadLevel(idx) {
-    this.currentLevel = idx;
-    const lvlData = LEVELS[idx];
-    this.map = new GameMap(lvlData);
-    this.players = [
-      new Player('一二', 'water', this.map.spawnYier.x, this.map.spawnYier.y),
-      new Player('布布', 'fire', this.map.spawnBubu.x, this.map.spawnBubu.y),
-    ];
-    if (this.camera) {
-      this.camera.mapW = this.map.pixelW;
-      this.camera.mapH = this.map.pixelH;
-    }
-    this.particles = [];
-    this.deathTimer = 0;
-    this.completeTimer = 0;
+  _loadLvl(i){
+    this.lvlIdx=i;const ld=LEVELS[i];
+    this.map=new GameMap(ld);
+    this.players=[new Player('一二','water',this.map.spawnY.x,this.map.spawnY.y),new Player('布布','fire',this.map.spawnB.x,this.map.spawnB.y)];
+    if(this.camera){this.camera.mapW=this.map.pixelW;this.camera.mapH=this.map.pixelH}
+    this.particles=[];this.deathT=0;this.completeT=0;
   }
 
-  resetLevel() {
-    this._loadLevel(this.currentLevel);
+  _isSolid(t){
+    if(t===1)return true;return false;
   }
 
-  _onClick(e) {
+  _click(mx,my){
     this.audio.init();
-    const rect = canvas.getBoundingClientRect();
-    const sx = LOGICAL_W / rect.width;
-    const sy = LOGICAL_H / rect.height;
-    const mx = (e.clientX - rect.left) * sx;
-    const my = (e.clientY - rect.top) * sy;
-    this._handleMenuClick(mx, my);
-  }
-
-  _handleMenuClick(mx, my) {
-    this.audio.init();
-    for (const btn of this._menuButtons) {
-      if (mx >= btn.x && mx <= btn.x+btn.w && my >= btn.y && my <= btn.y+btn.h) {
+    for(const b of this._btns){
+      if(mx>=b.x&&mx<=b.x+b.w&&my>=b.y&&my<=b.y+b.h){
         this.audio.menu();
-        switch (btn.action) {
-          case 'start': this.state = 'PLAYING'; this._loadLevel(this.currentLevel); break;
-          case 'levelSelect': this.state = 'LEVEL_SELECT'; break;
-          case 'loadLevel': this.state = 'PLAYING'; this._loadLevel(btn.level); break;
-          case 'menu': this.state = 'MENU'; break;
-        }
-        break;
+        if(b.act==='start'){this.state='PLAYING';this._loadLvl(this.lvlIdx)}
+        else if(b.act==='levels')this.state='LEVELS';
+        else if(b.act==='load'){this.state='PLAYING';this._loadLvl(b.lvl)}
+        else if(b.act==='menu')this.state='MENU';
       }
     }
   }
 
-  _loop(timestamp) {
-    let dt = Math.min((timestamp - this._lastTimestamp) / 16.667, 3);
-    if (isNaN(dt) || dt <= 0) dt = 1;
-    this._lastTimestamp = timestamp;
-    this.time += dt;
+  _loop(timestamp){
+    let dt=(timestamp-this._lt)/16.667;if(isNaN(dt)||dt<=0||dt>3)dt=1;this._lt=timestamp;this.time+=dt;
+    this.input.endFrame(); // ★ FIXED: clear at END of previous frame, not beginning
 
-    this.input.clearJustPressed();
+    // Keyboard: Pause / Restart
+    if(this.input.wasPressed('Escape')){if(this.state==='PLAYING')this.state='PAUSED';else if(this.state==='PAUSED')this.state='PLAYING'}
+    if(this.input.wasPressed('KeyR')){if(this.state==='PLAYING'||this.state==='PAUSED'){this._loadLvl(this.lvlIdx);this.state='PLAYING'}}
 
-    switch (this.state) {
-      case 'MENU':
-      case 'LEVEL_SELECT':
-        break;
+    switch(this.state){
       case 'PLAYING':
-        this._update(dt);
-        break;
+        this._update(dt);break;
       case 'DEAD':
-        this.deathTimer -= dt;
-        if (this.deathTimer <= 0) this.resetLevel(), this.state = 'PLAYING';
-        this.particles.forEach(p=>p.update());
-        this.particles = this.particles.filter(p=>p.alive);
-        break;
-      case 'LEVEL_COMPLETE':
-        this.completeTimer -= dt;
-        if (this.completeTimer <= 0) {
-          if (this.currentLevel < LEVELS.length - 1) {
-            this.currentLevel++;
-            if (this.currentLevel > this.maxLevelUnlocked) {
-              this.maxLevelUnlocked = this.currentLevel;
-              try { localStorage.setItem('bubuYier_progress', this.maxLevelUnlocked); } catch(e) {}
-            }
-            this._loadLevel(this.currentLevel);
-            this.state = 'PLAYING';
-          } else {
-            this.state = 'GAME_COMPLETE';
-            this.maxLevelUnlocked = LEVELS.length - 1;
-            try { localStorage.setItem('bubuYier_progress', this.maxLevelUnlocked); } catch(e) {}
-          }
+        this.deathT-=dt;if(this.deathT<=0){this._loadLvl(this.lvlIdx);this.state='PLAYING'}
+        this.particles.forEach(p=>p.update());this.particles=this.particles.filter(p=>p.alive);break;
+      case 'LVLCOMPLETE':
+        this.completeT-=dt;
+        if(this.completeT<=0){
+          if(this.lvlIdx<LEVELS.length-1){this.lvlIdx++;if(this.lvlIdx>this.maxLvl){this.maxLvl=this.lvlIdx;try{localStorage.setItem('bbyier_lvl',this.maxLvl)}catch(e){}}this._loadLvl(this.lvlIdx);this.state='PLAYING'}
+          else{this.state='WIN';this.maxLvl=LEVELS.length-1;try{localStorage.setItem('bbyier_lvl',this.maxLvl)}catch(e){}}
         }
-        this.particles.forEach(p=>p.update());
-        this.particles = this.particles.filter(p=>p.alive);
-        break;
-      case 'GAME_COMPLETE':
-        break;
+        this.particles.forEach(p=>p.update());this.particles=this.particles.filter(p=>p.alive);break;
     }
-
-    // Pause toggle
-    if (this.input.wasPressed('Escape')) {
-      if (this.state === 'PLAYING') this.state = 'PAUSED';
-      else if (this.state === 'PAUSED') this.state = 'PLAYING';
-    }
-    // Restart
-    if (this.input.wasPressed('KeyR')) {
-      if (this.state === 'PLAYING' || this.state === 'PAUSED') { this.resetLevel(); this.state = 'PLAYING'; }
-    }
-
     this._render();
-    requestAnimationFrame(this._loop);
+    requestAnimationFrame(t=>this._loop(t));
   }
 
-  _update(dt) {
-    this.map.update(this.time, this.players, this.particles);
-
-    for (const p of this.players) p.update(this.map, this.players[0]===p?this.players[1]:this.players[0], this.input, this.particles);
-
-    // Update particles
-    this.particles.forEach(p=>p.update());
-    this.particles = this.particles.filter(p=>p.alive);
-    if (this.particles.length > 150) this.particles.splice(0, this.particles.length-150);
-
-    // Check deaths
-    let anyDead = false;
-    for (const p of this.players) {
-      if (!p.alive) { anyDead = true; break; }
+  _update(dt){
+    this.map.update(this.time,this.players);
+    for(const p of this.players)p.update(this.input,this.particles);
+    this.particles.forEach(p=>p.update());this.particles=this.particles.filter(p=>p.alive);
+    if(this.particles.length>150)this.particles.splice(0,this.particles.length-150);
+    // Death check
+    let dead=false;
+    for(const p of this.players)if(!p.alive){dead=true;break}
+    if(dead){this.audio.die();this.deathT=45;this.state='DEAD';return}
+    // Complete check
+    if(this.players[0].atDoor&&this.players[1].atDoor){
+      for(const d of this.map.doors)if(d.active)spawnP(this.particles,d.x+d.w/2,d.y+d.h/2,25,d.type==='yier'?'#aaddff':'#ffaa66',4,30,2.5);
+      this.audio.complete();this.completeT=90;this.state='LVLCOMPLETE';
     }
-    if (anyDead) {
-      this.audio.die();
-      this.deathTimer = 50;
-      this.state = 'DEAD';
-      return;
-    }
-
-    // Check level complete (both at doors)
-    const yierAtDoor = this.players[0].atDoor;
-    const bubuAtDoor = this.players[1].atDoor;
-    if (yierAtDoor && bubuAtDoor) {
-      for (const d of this.map.doors) {
-        if (d.active) spawnParticles(this.particles, d.x+d.w/2, d.y+d.h/2, 25, d.type==='yier'?'#aaddff':'#ffaa66', 4, 30, 2.5);
-      }
-      this.audio.complete();
-      this.completeTimer = 100;
-      this.state = 'LEVEL_COMPLETE';
-    }
-
-    // Update camera
     this.camera.update(this.players);
   }
 
-  _render() {
-    ctx.clearRect(0, 0, LOGICAL_W, LOGICAL_H);
+  _render(){
+    ctx.clearRect(0,0,LOGICAL_W,LOGICAL_H);
+    ctx.fillStyle='#1a1a2e';ctx.fillRect(0,0,LOGICAL_W,LOGICAL_H);
+    // Grid
+    ctx.strokeStyle='rgba(255,255,255,0.015)';ctx.lineWidth=0.5;
+    const gox=-(this.camera?.x||0)%TILE,goy=-(this.camera?.y||0)%TILE;
+    for(let x=gox;x<LOGICAL_W;x+=TILE){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,LOGICAL_H);ctx.stroke()}
+    for(let y=goy;y<LOGICAL_H;y+=TILE){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(LOGICAL_W,y);ctx.stroke()}
 
-    // Background
-    ctx.fillStyle = C.BG;
-    ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
-
-    // Grid pattern
-    ctx.strokeStyle = C.BG_GRID;
-    ctx.lineWidth = 0.5;
-    const gridOffX = -this.camera.x % TILE;
-    const gridOffY = -this.camera.y % TILE;
-    for (let x = gridOffX; x < LOGICAL_W; x += TILE) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, LOGICAL_H); ctx.stroke();
+    const showGame=this.map&&['PLAYING','DEAD','LVLCOMPLETE','PAUSED'].includes(this.state);
+    if(showGame){this.map.render(ctx,this.camera,this.time);}
+    // Particles
+    for(const p of this.particles){
+      const h=p.color;ctx.fillStyle=`rgba(${parseInt(h.slice(1,3),16)},${parseInt(h.slice(3,5),16)},${parseInt(h.slice(5,7),16)},${p.alpha})`;
+      ctx.beginPath();ctx.arc(p.x-this.camera.x,p.y-this.camera.y,p.size,0,Math.PI*2);ctx.fill();
     }
-    for (let y = gridOffY; y < LOGICAL_H; y += TILE) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(LOGICAL_W, y); ctx.stroke();
-    }
+    // Players
+    if(showGame)for(const p of this.players)p.render(ctx,this.camera,this.time);
 
-    // Render map
-    if (this.map && (this.state==='PLAYING'||this.state==='DEAD'||this.state==='LEVEL_COMPLETE'||this.state==='PAUSED')) {
-      this.map.render(ctx, this.camera, this.time);
-    }
-
-    // Render particles
-    for (const p of this.particles) {
-      const hex = p.color;
-      const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
-      ctx.fillStyle = `rgba(${r},${g},${b},${p.alpha})`;
-      ctx.beginPath(); ctx.arc(p.x-this.camera.x, p.y-this.camera.y, p.size, 0, Math.PI*2); ctx.fill();
-    }
-
-    // Render players
-    if (this.map && (this.state==='PLAYING'||this.state==='DEAD'||this.state==='LEVEL_COMPLETE'||this.state==='PAUSED')) {
-      for (const p of this.players) p.render(ctx, this.camera, this.time);
-    }
-
-    // UI overlays
-    switch (this.state) {
-      case 'MENU': drawMenu(ctx, this); break;
-      case 'LEVEL_SELECT': drawLevelSelect(ctx, this); break;
-      case 'PLAYING': drawHUD(ctx, this, this.time); drawMobileControls(ctx, this); break;
-      case 'PAUSED': drawHUD(ctx, this, this.time); drawPause(ctx); break;
-      case 'DEAD': drawHUD(ctx, this, this.time); drawDeath(ctx, this.deathTimer); break;
-      case 'LEVEL_COMPLETE': drawHUD(ctx, this, this.time); drawLevelComplete(ctx, this); break;
-      case 'GAME_COMPLETE': drawGameComplete(ctx); break;
+    // UI
+    switch(this.state){
+      case 'MENU':drawMenu(ctx,this);break;
+      case 'LEVELS':drawLevelSelect(ctx,this);break;
+      case 'PLAYING':drawHUD(ctx,this);drawTouchCtrls(ctx,this);break;
+      case 'PAUSED':drawHUD(ctx,this);drawOverlay(ctx,this);break;
+      case 'DEAD':drawHUD(ctx,this);drawOverlay(ctx,this);break;
+      case 'LVLCOMPLETE':drawHUD(ctx,this);drawOverlay(ctx,this);break;
+      case 'WIN':drawOverlay(ctx,this);break;
     }
   }
 }
 
-// ============================================================
-// SECTION 10: Bootstrap
-// ============================================================
-function resizeCanvas() {
-  const maxW = window.innerWidth;
-  const maxH = window.innerHeight;
-  const scale = Math.min(maxW / LOGICAL_W, maxH / LOGICAL_H);
-  canvas.style.width = (LOGICAL_W * scale) + 'px';
-  canvas.style.height = (LOGICAL_H * scale) + 'px';
+// ═══════════════════════════════════════════
+// BOOT
+// ═══════════════════════════════════════════
+function resize(){
+  const s=Math.min(window.innerWidth/LOGICAL_W,window.innerHeight/LOGICAL_H);
+  canvas.style.width=LOGICAL_W*s+'px';canvas.style.height=LOGICAL_H*s+'px';
 }
-window.addEventListener('resize', resizeCanvas);
-window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 100));
-resizeCanvas();
+window.addEventListener('resize',resize);
+window.addEventListener('orientationchange',()=>setTimeout(resize,100));
+resize();
 
-// Start game on first interaction for audio unlock
-const game = new Game();
-console.log('🐼🐻 森林冰火人 — 布布 & 一二 — 准备就绪！');
-console.log('操作: 一二=WASD | 布布=方向键 | R=重新开始 | ESC=暂停');
+window.G=new Game();
+console.log('🐼🐻 森林冰火人 — 布布 & 一二 — 准备好了！');
+console.log('一二=WASD | 布布=方向键 | R=重启 | ESC=菜单');
 </script>
 </body>
 </html>
