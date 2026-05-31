@@ -800,9 +800,7 @@ class Game{
 
   _loop(timestamp){
     let dt=(timestamp-this._lt)/16.667;if(isNaN(dt)||dt<=0||dt>3)dt=1;this._lt=timestamp;this.time+=dt;
-    this.input.endFrame(); // ★ FIXED: clear at END of previous frame, not beginning
-
-    // Keyboard: Pause / Restart
+    // Keyboard: Pause / Restart (check BEFORE clearing justPressed)
     if(this.input.wasPressed('Escape')){if(this.state==='PLAYING')this.state='PAUSED';else if(this.state==='PAUSED')this.state='PLAYING'}
     if(this.input.wasPressed('KeyR')){if(this.state==='PLAYING'||this.state==='PAUSED'){this._loadLvl(this.lvlIdx);this.state='PLAYING'}}
 
@@ -821,6 +819,7 @@ class Game{
         this.particles.forEach(p=>p.update());this.particles=this.particles.filter(p=>p.alive);break;
     }
     this._render();
+    this.input.endFrame(); // ★ Clear justPressed at END of frame, after all updates consumed them
     requestAnimationFrame(t=>this._loop(t));
   }
 
