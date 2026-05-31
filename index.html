@@ -13,504 +13,279 @@ canvas{display:block}
 <body>
 <canvas id="gc"></canvas>
 <script>
-// ============================================================
+// ═══════════════════════════════════════════
 // CONSTANTS
-// ============================================================
+// ═══════════════════════════════════════════
 const TILE=40, GRAVITY=0.55, FRICTION=0.8, MAX_SPEED_X=3.8, MAX_SPEED_Y=13, JUMP_VEL=-10.5;
 const LOGICAL_W=800, LOGICAL_H=600;
 const canvas=document.getElementById('gc'), ctx=canvas.getContext('2d');
 canvas.width=LOGICAL_W; canvas.height=LOGICAL_H;
 
-// ============================================================
-// AUDIO ENGINE
-// ============================================================
+// ═══════════════════════════════════════════
+// AUDIO — simple Web Audio tones
+// ═══════════════════════════════════════════
 class AudioEngine{
-  constructor(){this.ctx=null;this.enabled=true}
-  init(){if(this.ctx)return;try{this.ctx=new(window.AudioContext||window.webkitAudioContext)()}catch(e){this.enabled=false}}
-  play(f,d,t='square',v=0.12){
-    if(!this.ctx||!this.enabled)return;
-    if(this.ctx.state==='suspended')this.ctx.resume();
+  constructor(){this.ctx=null;this.ok=true}
+  init(){if(this.ctx)return;try{this.ctx=new(window.AudioContext||window.webkitAudioContext)()}catch(e){this.ok=false}}
+  play(f,d,t='square',v=0.1){
+    if(!this.ctx||!this.ok)return;if(this.ctx.state==='suspended')this.ctx.resume();
     try{const o=this.ctx.createOscillator(),g=this.ctx.createGain();o.type=t;o.frequency.value=f;g.gain.setValueAtTime(v,this.ctx.currentTime);g.gain.exponentialRampToValueAtTime(0.001,this.ctx.currentTime+d);o.connect(g);g.connect(this.ctx.destination);o.start();o.stop(this.ctx.currentTime+d+0.05)}catch(e){}
   }
-  jump(){this.play(350,0.08,'square',0.1)}
-  collect(){this.play(880,0.08,'sine',0.15);setTimeout(()=>this.play(1100,0.08,'sine',0.15),60)}
-  die(){this.play(100,0.3,'sawtooth',0.18)}
-  complete(){this.play(523,0.1,'sine',0.18);setTimeout(()=>this.play(659,0.1,'sine',0.18),120);setTimeout(()=>this.play(784,0.2,'sine',0.22),240)}
-  menu(){this.play(440,0.08,'sine',0.08)}
+  jump(){this.play(350,0.08,'square',0.08)}
+  collect(){this.play(800,0.08,'sine',0.13);setTimeout(()=>this.play(1050,0.08,'sine',0.13),60)}
+  die(){this.play(90,0.3,'sawtooth',0.16)}
+  complete(){this.play(523,0.1,'sine',0.15);setTimeout(()=>this.play(659,0.1,'sine',0.15),120);setTimeout(()=>this.play(784,0.2,'sine',0.2),240)}
+  click(){this.play(440,0.06,'sine',0.06)}
 }
 
-// ============================================================
-// INPUT HANDLER
-// ============================================================
-class InputHandler{
+// ═══════════════════════════════════════════
+// INPUT
+// ═══════════════════════════════════════════
+class Input{
   constructor(){
-    this.keys=new Set();this.justPressed=new Set();this.touches={};
-    window.addEventListener('keydown',e=>{if(!this.keys.has(e.code))this.justPressed.add(e.code);this.keys.add(e.code);if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault()});
-    window.addEventListener('keyup',e=>{this.keys.delete(e.code)});
+    this.k=new Set();this.jp=new Set();this.touches={};
+    addEventListener('keydown',e=>{if(!this.k.has(e.code))this.jp.add(e.code);this.k.add(e.code);if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault()});
+    addEventListener('keyup',e=>{this.k.delete(e.code)});
     canvas.addEventListener('touchstart',e=>{e.preventDefault();for(const t of e.changedTouches){const r=canvas.getBoundingClientRect();this.touches[t.identifier]={x:(t.clientX-r.left)*(LOGICAL_W/r.width),y:(t.clientY-r.top)*(LOGICAL_H/r.height)}}});
     canvas.addEventListener('touchend',e=>{for(const t of e.changedTouches)delete this.touches[t.identifier]});
     canvas.addEventListener('touchmove',e=>{e.preventDefault();for(const t of e.changedTouches){if(!this.touches[t.identifier])continue;const r=canvas.getBoundingClientRect();this.touches[t.identifier].x=(t.clientX-r.left)*(LOGICAL_W/r.width);this.touches[t.identifier].y=(t.clientY-r.top)*(LOGICAL_H/r.height)}});
     canvas.addEventListener('mousedown',()=>{});
   }
-  isDown(c){return this.keys.has(c)}
-  wasPressed(c){return this.justPressed.has(c)}
-  endFrame(){this.justPressed.clear()}
+  isDown(c){return this.k.has(c)}
+  wasPressed(c){return this.jp.has(c)}
+  endFrame(){this.jp.clear()}
   hasTouch(){return Object.keys(this.touches).length>0}
-  getYierInput(){
+  getTouchDir(half){
     let l=false,r=false,u=false,d=false;
-    for(const id in this.touches){const t=this.touches[id];if(t.x<LOGICAL_W/2){const dx=t.x-LOGICAL_W/4,dy=t.y-LOGICAL_H*0.68;if(Math.abs(dx)>15||Math.abs(dy)>15){if(Math.abs(dx)>Math.abs(dy)){l=dx<-15;r=dx>15}else{u=dy<-15;d=dy>15}}}}
-    return{l,r,u,d};
-  }
-  getBubuInput(){
-    let l=false,r=false,u=false,d=false;
-    for(const id in this.touches){const t=this.touches[id];if(t.x>=LOGICAL_W/2){const dx=t.x-LOGICAL_W*3/4,dy=t.y-LOGICAL_H*0.68;if(Math.abs(dx)>15||Math.abs(dy)>15){if(Math.abs(dx)>Math.abs(dy)){l=dx<-15;r=dx>15}else{u=dy<-15;d=dy>15}}}}
-    return{l,r,u,d};
-  }
-}
-
-// ============================================================
-// PARTICLE SYSTEM
-// ============================================================
-class Particle{
-  constructor(x,y,vx,vy,life,color,size){this.x=x;this.y=y;this.vx=vx;this.vy=vy;this.life=life;this.maxLife=life;this.color=color;this.size=size}
-  update(){this.x+=this.vx;this.y+=this.vy;this.vy+=0.12;this.life--;this.size*=0.99}
-  get alpha(){return this.life/this.maxLife}
-  get alive(){return this.life>0}
-}
-function spawnP(arr,x,y,n,col,sp=3,life=25,sz=2){for(let i=0;i<n;i++)arr.push(new Particle(x,y,(Math.random()-0.5)*sp*2,(Math.random()-0.7)*sp*3,life+Math.random()*10,col,sz+Math.random()*2))}
-
-// ============================================================
-// LEVEL DATA — water/lava always in pits with walls below
-// ============================================================
-// Encoding: #=wall, ~=water(pit), ^=lava(pit), !=acid, B=blueGem, R=redGem, 1=YierSpawn, 2=BubuSpawn, D=YierDoor, E=BubuDoor, P=pushBlock
-// Every ~, ^, ! tile MUST have # directly below it in the next row.
-// Use single-row water/lava pits only (row of hazard, row of wall below).
-const LEVELS=[
-  { // Level 1: Tutorial — simple movement, single pits
-    name:'Forest Beginning',nameZh:'森林初遇',w:32,h:18,map:[
-      '################################',
-      '#                              #',
-      '#   1                          #',
-      '#   ###               D        #',
-      '#           B        #####     #',
-      '#   B      ###           E     #',
-      '#  ####         ###########    #',
-      '#      #        #              #',
-      '#  R   #   B    #     R        #',
-      '#  #   #  ####  #   ######     #',
-      '#  #   #  #  #  #   #          #',
-      '#  #      #  #      #          #',
-      '#  ########  ########          #',
-      '#                     ##       #',
-      '#           R   2      ##      #',
-      '#  ########  ~~~~  ######^^^  #',
-      '#  ########  ######  #######  #',
-      '################################',
-    ]
-  },
-  { // Level 2: Cooperation — push blocks
-    name:'Crossing Paths',nameZh:'交错之路',w:34,h:20,map:[
-      '##################################',
-      '#                                #',
-      '#   1               D            #',
-      '#   ###    B       #####         #',
-      '#     #   ###          E         #',
-      '#     #    #       ##########    #',
-      '#  B  #    #  R    #             #',
-      '#  #  #    ######  #    R        #',
-      '#  #  #        #   #  ########   #',
-      '#  #  #   P    #   #  #          #',
-      '#  #  ######   #   #  #   B      #',
-      '#  #       #   #   #  #  ####    #',
-      '#  #   R   #   #   #  #  #       #',
-      '#  ####### #   #   #  #  #       #',
-      '#          #   #      #  #       #',
-      '#    B     2   ########  #       #',
-      '#  ######  ######   ^^^^ #       #',
-      '#  ~~~~~~          ###### #       #',
-      '#  ######          ########       #',
-      '##################################',
-    ]
-  },
-  { // Level 3: Hazards — water, lava, acid
-    name:'Rising Challenges',nameZh:'潮汐挑战',w:34,h:22,map:[
-      '##################################',
-      '#                                #',
-      '#   1               D            #',
-      '#   ####           #####         #',
-      '#       #          #             #',
-      '#   B   #    R     #      E      #',
-      '#   #   #  #####   #    ######   #',
-      '#   #   #  #   #   #    #        #',
-      '#   #   #  #   #   #    #  R     #',
-      '#   #   #  #   #   #    ######   #',
-      '#   #   #  #   #   #             #',
-      '#   #   #  #   #   #     B       #',
-      '#   #   #  #   #   ###########   #',
-      '#   #   #  #   #             #   #',
-      '#   #   #  #   #     P       #   #',
-      '#   #      #   ############ #   #',
-      '#   ########             2  #   #',
-      '#                          ###   #',
-      '#  ~~~~~    !!!!!    ^^^^^        #',
-      '#  #####    #####    #####        #',
-      '#       B                R        #',
-      '##################################',
-    ]
-  },
-  { // Level 4: Split Chambers — parallel puzzles
-    name:'Split Chambers',nameZh:'分室迷局',w:36,h:24,map:[
-      '####################################',
-      '#                                  #',
-      '#   1                 D            #',
-      '#   ####             #####         #',
-      '#       #            #             #',
-      '#   B   #            #      E      #',
-      '#   #   #    R       #    #####    #',
-      '#   #   #  ######    #    #        #',
-      '#   #   #  #    #    #    #  R     #',
-      '#   #   #  #    #    #    ######   #',
-      '#   #   #  #    #    #         #   #',
-      '#   #   #  #    ######    B    #   #',
-      '#   #   #  #              ##   #   #',
-      '#   #   #  #  ~~~~~~~~~~~~  #   #   #',
-      '#   #   #  #  ############# #   #   #',
-      '#   #   #                  #   #   #',
-      '#   #   ########   ##########   #   #',
-      '#   #       #      #               #',
-      '#   #   P   #  2   #   P     R     #',
-      '#   ########  #######  ##########   #',
-      '#    ^^^^^^^^^^        ~~~~~~~~~~  #',
-      '#    ##########        ##########  #',
-      '#        R               B          #',
-      '####################################',
-    ]
-  },
-  { // Level 5: Final Trial — all mechanics
-    name:'Final Trial',nameZh:'最终试炼',w:38,h:26,map:[
-      '######################################',
-      '#                                    #',
-      '#   1                                #',
-      '#   ####           D                 #',
-      '#       #         #####              #',
-      '#   B   #         #                  #',
-      '#   #   #   R     #          E       #',
-      '#   #   # #####   #        ######    #',
-      '#   #   #     #   #        #         #',
-      '#   #   #  B  #   #   R    #   B     #',
-      '#   #   #  #  #   #######  #  ###    #',
-      '#   #   #  #  #        #  #  #       #',
-      '#   #   #  #  #   P    #  #  #  R    #',
-      '#   #   #  #  ######## #  #  #####   #',
-      '#   #   #  #           #  #          #',
-      '#   #   #  ##########  #  #   P      #',
-      '#   #   #           #  #  #####      #',
-      '#   #   #    B      #  #       2     #',
-      '#   #   ##########  #  #  ########   #',
-      '#   #            #  #  #  #          #',
-      '#   ##########   #  #  #  #    B     #',
-      '#               #     #             #',
-      '#  ~~~~~~~~~~~ #  ^^^^^^^^^^^^^^^^  #',
-      '#  ########### #  ################  #',
-      '#          R                      #',
-      '######################################',
-    ]
-  }
-];
-
-// ============================================================
-// PLAYER CLASS — detailed character rendering
-// ============================================================
-class Player{
-  constructor(name,el,x,y){
-    this.name=name;this.el=el;this.sx=x;this.sy=y;this.x=x;this.y=y;
-    this.vx=0;this.vy=0;this.w=el==='water'?22:28;this.h=el==='water'?36:34;
-    this.onGround=false;this.alive=true;this.gems=0;this.atDoor=false;
-    this.facing=1;this.animT=0;this.idleT=0;this.jumpHeld=false;
-  }
-  respawn(){
-    this.x=this.sx;this.y=this.sy;this.vx=0;this.vy=0;this.alive=true;
-    this.atDoor=false;this.onGround=false;this.gems=0;this.jumpHeld=false;
-  }
-  update(input,parts){
-    if(!this.alive)return;
-    // Input
-    let l=false,r=false,up=false,down=false;
-    if(this.el==='water'){
-      l=input.isDown('KeyA');r=input.isDown('KeyD');up=input.wasPressed('KeyW');down=input.isDown('KeyS');
-      if(input.hasTouch()){const yi=input.getYierInput();if(!l&&!r&&!up&&!down){l=yi.l;r=yi.r;up=yi.u;down=yi.d}}
-    }else{
-      l=input.isDown('ArrowLeft');r=input.isDown('ArrowRight');up=input.wasPressed('ArrowUp');down=input.isDown('ArrowDown');
-      if(input.hasTouch()){const bi=input.getBubuInput();if(!l&&!r&&!up&&!down){l=bi.l;r=bi.r;up=bi.u;down=bi.d}}
-    }
-    // Move
-    if(l){this.vx-=0.5;this.facing=-1}if(r){this.vx+=0.5;this.facing=1}
-    if(!l&&!r)this.vx*=FRICTION;
-    this.vx=Math.max(-MAX_SPEED_X,Math.min(MAX_SPEED_X,this.vx));
-    // Jump
-    if(up&&this.onGround){this.vy=JUMP_VEL;this.onGround=false;this.jumpHeld=true;spawnP(parts,this.x+this.w/2,this.y+this.h,6,this.el==='water'?'#aaddff':'#ffaa66',2,12,1.5)}
-    // Variable jump height
-    if(!input.isDown(this.el==='water'?'KeyW':'ArrowUp')&&this.jumpHeld&&this.vy<JUMP_VEL*0.5){this.vy=JUMP_VEL*0.5;this.jumpHeld=false}
-    if(this.onGround)this.jumpHeld=false;
-    // Gravity
-    this.vy+=GRAVITY;this.vy=Math.min(this.vy,MAX_SPEED_Y);
-    // Move
-    this._moveX();this._moveY();
-    // Fall off map
-    if(this.y>G.map.pixelH+100)this._die(parts);
-    // Anim
-    if(!this.onGround)this.animT+=0.15;
-    else if(l||r)this.animT+=0.18;
-    else{this.animT=0;this.idleT++}
-  }
-
-  _moveX(){
-    this.x+=this.vx;
-    for(let r=Math.floor(this.y/TILE);r<=Math.floor((this.y+this.h-1)/TILE);r++)
-      for(let c=Math.floor(this.x/TILE);c<=Math.floor((this.x+this.w-1)/TILE);c++)
-        if(G._isSolid(G.map.get(c,r))){if(this.vx>0)this.x=c*TILE-this.w;else if(this.vx<0)this.x=(c+1)*TILE;this.vx=0}
-    // Push blocks
-    for(const b of G.map.pushBlocks){
-      if(!b.active||!this._aabb(b))continue;
-      const d=this.vx>0?1:-1,nx=b.x+d*2;
-      let blk=false;
-      for(let r=Math.floor(b.y/TILE);r<=Math.floor((b.y+b.h-1)/TILE);r++)
-        for(let c=Math.floor(nx/TILE);c<=Math.floor((nx+b.w-1)/TILE);c++)
-          if(G._isSolid(G.map.get(c,r)))blk=true;
-      for(const ob of G.map.pushBlocks){if(ob!==b&&ob.active&&nx<ob.x+ob.w&&nx+b.w>ob.x&&b.y<ob.y+ob.h&&b.y+b.h>ob.y)blk=true}
-      if(blk){if(this.vx>0)this.x=b.x-this.w;else if(this.vx<0)this.x=b.x+b.w;this.vx=0}else b.x+=d*2;
-    }
-  }
-
-  _moveY(){
-    this.y+=this.vy;this.onGround=false;
-    // Wall collision
-    for(let r=Math.floor(this.y/TILE);r<=Math.floor((this.y+this.h-1)/TILE);r++)
-      for(let c=Math.floor(this.x/TILE);c<=Math.floor((this.x+this.w-1)/TILE);c++)
-        if(G._isSolid(G.map.get(c,r))){if(this.vy>0){this.y=r*TILE-this.h;this.onGround=true;this.vy=0}else if(this.vy<0){this.y=(r+1)*TILE;this.vy=0}}
-    // Push block vertical
-    for(const b of G.map.pushBlocks){
-      if(!b.active||this.x+this.w<=b.x||this.x>=b.x+b.w)continue;
-      if(this.vy>0&&this.y+this.h>=b.y&&this.y+this.h-this.vy<=b.y+4){this.y=b.y-this.h;this.onGround=true;this.vy=0}
-      else if(this.vy<0&&this.y<=b.y+b.h&&this.y-this.vy>=b.y+b.h-4){this.y=b.y+b.h;this.vy=0}
-    }
-    // Hazards
-    for(let r=Math.floor(this.y/TILE);r<=Math.floor((this.y+this.h-1)/TILE);r++)
-      for(let c=Math.floor(this.x/TILE);c<=Math.floor((this.x+this.w-1)/TILE);c++){
-        const t=G.map.get(c,r);
-        if(t===2&&this.el==='fire')this._die(G.particles);
-        if(t===3&&this.el==='water')this._die(G.particles);
-        if(t===4)this._die(G.particles);
+    const cx=half==='left'?LOGICAL_W/4:LOGICAL_W*3/4, cy=LOGICAL_H*0.68;
+    for(const id in this.touches){
+      const t=this.touches[id];
+      if((half==='left'&&t.x<LOGICAL_W/2)||(half==='right'&&t.x>=LOGICAL_W/2)){
+        const dx=t.x-cx,dy=t.y-cy;
+        if(Math.abs(dx)>15||Math.abs(dy)>15){if(Math.abs(dx)>Math.abs(dy)){l=dx<-15;r=dx>15}else{u=dy<-15;d=dy>15}}
       }
-  }
-
-  _aabb(b){return this.x<b.x+b.w&&this.x+this.w>b.x&&this.y<b.y+b.h&&this.y+this.h>b.y}
-  _die(p){if(!this.alive)return;this.alive=false;spawnP(p,this.x+this.w/2,this.y+this.h/2,25,this.el==='water'?'#aaddff':'#ff6633',4,30,3)}
-
-  // ========== DETAILED CHARACTER RENDERING ==========
-  render(ctx,cam,t){
-    if(!this.alive)return;
-    const sx=this.x-cam.x,sy=this.y-cam.y;
-    if(sx<-60||sx>cam.width+60||sy<-60||sy>cam.height+60)return;
-    ctx.save();ctx.translate(sx+this.w/2,sy+this.h/2);
-    if(this.el==='water')this._drawYier(ctx,t);
-    else this._drawBubu(ctx,t);
-    ctx.restore();
-  }
-
-  // ─── 一二 (YIER) — White Panda ───
-  _drawYier(ctx,t){
-    const b=1+Math.sin(t*0.002+this.idleT*0.015)*0.025;
-    ctx.scale(b,b);
-    const arm=Math.sin(this.animT*0.8)*2.5;
-
-    // ── BODY (white, rounded) ──
-    ctx.fillStyle='#fafafa';
-    ctx.beginPath();ctx.ellipse(0,4,9,13,0,0,Math.PI*2);ctx.fill();
-    ctx.strokeStyle='#ddd';ctx.lineWidth=0.4;
-    ctx.beginPath();ctx.ellipse(0,4,9,13,0,0,Math.PI*2);ctx.stroke();
-
-    // ── LEGS (black, short) ──
-    ctx.fillStyle='#1a1a1a';
-    this._rr(ctx,-6,14,5,8,2.5);this._rr(ctx,1,14,5,8,2.5);
-
-    // ── ARMS (white, short stubs) ──
-    ctx.fillStyle='#fafafa';ctx.strokeStyle='#ddd';ctx.lineWidth=0.4;
-    ctx.save();ctx.translate(-10,3+arm);
-    ctx.beginPath();ctx.ellipse(0,0,3.5,6.5,0,0,Math.PI*2);ctx.fill();ctx.stroke();
-    ctx.restore();
-    ctx.save();ctx.translate(10,3-arm);
-    ctx.beginPath();ctx.ellipse(0,0,3.5,6.5,0,0,Math.PI*2);ctx.fill();ctx.stroke();
-    ctx.restore();
-
-    // ── EARS (black round) ──
-    ctx.fillStyle='#1a1a1a';
-    ctx.beginPath();ctx.arc(-8,-10,5.5,0,Math.PI*2);ctx.fill();
-    ctx.beginPath();ctx.arc(8,-10,5.5,0,Math.PI*2);ctx.fill();
-
-    // ── HEAD (white circle) ──
-    ctx.fillStyle='#fafafa';
-    ctx.beginPath();ctx.arc(0,-3,12,0,Math.PI*2);ctx.fill();
-    ctx.strokeStyle='#ddd';ctx.lineWidth=0.4;
-    ctx.beginPath();ctx.arc(0,-3,12,0,Math.PI*2);ctx.stroke();
-
-    // ── PANDA EYE PATCHES (distinctive black marks) ──
-    ctx.fillStyle='#1a1a1a';
-    ctx.beginPath();ctx.ellipse(-4.5,-6,3.8,5,-0.25,0,Math.PI*2);ctx.fill();
-    ctx.beginPath();ctx.ellipse(4.5,-6,3.8,5,0.25,0,Math.PI*2);ctx.fill();
-
-    // ── EYES (white dots inside patches) ──
-    ctx.fillStyle='#fff';
-    ctx.beginPath();ctx.arc(-4.5,-6.5,1.9,0,Math.PI*2);ctx.fill();
-    ctx.beginPath();ctx.arc(4.5,-6.5,1.9,0,Math.PI*2);ctx.fill();
-    // pupils
-    ctx.fillStyle='#111';
-    ctx.beginPath();ctx.arc(-3.8,-6.2,0.9,0,Math.PI*2);ctx.fill();
-    ctx.beginPath();ctx.arc(5.2,-6.2,0.9,0,Math.PI*2);ctx.fill();
-    // eye highlights
-    ctx.fillStyle='#fff';
-    ctx.beginPath();ctx.arc(-4.2,-6.8,0.5,0,Math.PI*2);ctx.fill();
-    ctx.beginPath();ctx.arc(4.8,-6.8,0.5,0,Math.PI*2);ctx.fill();
-
-    // ── NOSE (small black dot) ──
-    ctx.fillStyle='#1a1a1a';
-    ctx.beginPath();ctx.arc(0,-2.2,1.4,0,Math.PI*2);ctx.fill();
-
-    // ── MOUTH (cute smile) ──
-    ctx.strokeStyle='#333';ctx.lineWidth=0.7;
-    ctx.beginPath();ctx.arc(0,-0.8,2.5,0.15,Math.PI-0.15);ctx.stroke();
-
-    // ── BOW TIE (distinctive black bow!) ──
-    ctx.fillStyle='#1a1a1a';
-    ctx.beginPath();ctx.moveTo(0,8);ctx.lineTo(-6,4.5);ctx.lineTo(-6,11.5);ctx.closePath();ctx.fill();
-    ctx.beginPath();ctx.moveTo(0,8);ctx.lineTo(6,4.5);ctx.lineTo(6,11.5);ctx.closePath();ctx.fill();
-    ctx.beginPath();ctx.arc(0,8,2.2,0,Math.PI*2);ctx.fill();
-
-    // ── CHEEK BLUSH (subtle) ──
-    ctx.fillStyle='rgba(255,160,160,0.25)';
-    ctx.beginPath();ctx.ellipse(-7.5,-1,2.5,1.8,0,0,Math.PI*2);ctx.fill();
-    ctx.beginPath();ctx.ellipse(7.5,-1,2.5,1.8,0,0,Math.PI*2);ctx.fill();
-  }
-
-  // ─── 布布 (BUBU) — Brown Bear ───
-  _drawBubu(ctx,t){
-    const b=1+Math.sin(t*0.002+this.idleT*0.015)*0.025;
-    ctx.scale(b,b);
-    const arm=Math.sin(this.animT*0.8)*2;
-
-    // ── BODY (chubby brown oval) ──
-    ctx.fillStyle='#8B5E3C';
-    ctx.beginPath();ctx.ellipse(0,3,14,13,0,0,Math.PI*2);ctx.fill();
-    ctx.strokeStyle='#5C3A1E';ctx.lineWidth=0.5;
-    ctx.beginPath();ctx.ellipse(0,3,14,13,0,0,Math.PI*2);ctx.stroke();
-
-    // ── BELLY PATCH (lighter) ──
-    ctx.fillStyle='#A0724A';
-    ctx.beginPath();ctx.ellipse(0,5,8.5,8,0,0,Math.PI*2);ctx.fill();
-
-    // ── LEGS (thick brown) ──
-    ctx.fillStyle='#5C3A1E';
-    this._rr(ctx,-9,13,7.5,8,3);this._rr(ctx,1.5,13,7.5,8,3);
-
-    // ── ARMS (brown stubby) ──
-    ctx.fillStyle='#8B5E3C';ctx.strokeStyle='#5C3A1E';ctx.lineWidth=0.5;
-    ctx.save();ctx.translate(-15,2+arm);
-    this._rr(ctx,-2.5,-3.5,6,9,2.5);
-    ctx.restore();
-    ctx.save();ctx.translate(15,2-arm);
-    this._rr(ctx,-3.5,-3.5,6,9,2.5);
-    ctx.restore();
-
-    // ── EARS (brown round, lighter inside) ──
-    ctx.fillStyle='#8B5E3C';
-    ctx.beginPath();ctx.arc(-9.5,-10,6.5,0,Math.PI*2);ctx.fill();
-    ctx.beginPath();ctx.arc(9.5,-10,6.5,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle='#C4956A';
-    ctx.beginPath();ctx.arc(-9.5,-10,3.5,0,Math.PI*2);ctx.fill();
-    ctx.beginPath();ctx.arc(9.5,-10,3.5,0,Math.PI*2);ctx.fill();
-
-    // ── HEAD (larger brown circle) ──
-    ctx.fillStyle='#8B5E3C';
-    ctx.beginPath();ctx.arc(0,-4,14.5,0,Math.PI*2);ctx.fill();
-    ctx.strokeStyle='#5C3A1E';ctx.lineWidth=0.5;
-    ctx.beginPath();ctx.arc(0,-4,14.5,0,Math.PI*2);ctx.stroke();
-
-    // ── SNOUT/MUZZLE (cream/light brown oval) ──
-    ctx.fillStyle='#D4A574';
-    ctx.beginPath();ctx.ellipse(0,0,7.5,6.2,0,0,Math.PI*2);ctx.fill();
-
-    // ── NOSE (dark oval on snout) ──
-    ctx.fillStyle='#3a1f0a';
-    ctx.beginPath();ctx.ellipse(0,-2.2,3,2.2,0,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle='rgba(255,255,255,0.35)';
-    ctx.beginPath();ctx.arc(-0.7,-3,0.9,0,Math.PI*2);ctx.fill();
-
-    // ── EYES (small dark) ──
-    ctx.fillStyle='#3a1f0a';
-    ctx.beginPath();ctx.arc(-5.2,-7.5,1.8,0,Math.PI*2);ctx.fill();
-    ctx.beginPath();ctx.arc(5.2,-7.5,1.8,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle='#fff';
-    ctx.beginPath();ctx.arc(-4.6,-8,0.7,0,Math.PI*2);ctx.fill();
-    ctx.beginPath();ctx.arc(5.8,-8,0.7,0,Math.PI*2);ctx.fill();
-
-    // ── BLUSH (distinctive pink cheeks!) ──
-    ctx.fillStyle='rgba(255,135,135,0.45)';
-    ctx.beginPath();ctx.ellipse(-9,-2,3.8,2.8,0,0,Math.PI*2);ctx.fill();
-    ctx.beginPath();ctx.ellipse(9,-2,3.8,2.8,0,0,Math.PI*2);ctx.fill();
-
-    // ── MOUTH ──
-    ctx.strokeStyle='#5C3A1E';ctx.lineWidth=0.7;
-    ctx.beginPath();ctx.arc(0,1.8,3,0.08,Math.PI-0.08);ctx.stroke();
-  }
-
-  _rr(ctx,x,y,w,h,r){
-    ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);
-    ctx.arcTo(x+w,y,x+w,y+r,r);ctx.lineTo(x+w,y+h-r);
-    ctx.arcTo(x+w,y+h,x+w-r,y+h,r);ctx.lineTo(x+r,y+h);
-    ctx.arcTo(x,y+h,x,y+h-r,r);ctx.lineTo(x,y+r);
-    ctx.arcTo(x,y,x+r,y,r);ctx.closePath();ctx.fill();
-    if(ctx.strokeStyle!=='rgba(0,0,0,0)')ctx.stroke();
+    }
+    return{l,r,u,d};
   }
 }
 
-// ============================================================
+// ═══════════════════════════════════════════
+// PARTICLES
+// ═══════════════════════════════════════════
+class Particle{
+  constructor(x,y,vx,vy,life,col,sz){this.x=x;this.y=y;this.vx=vx;this.vy=vy;this.life=life;this.max=life;this.c=col;this.s=sz}
+  update(){this.x+=this.vx;this.y+=this.vy;this.vy+=0.12;this.life--;this.s*=0.99}
+  a(){return this.life/this.max}
+  alive(){return this.life>0}
+}
+function sp(arr,x,y,n,c,sp=3,life=25,sz=2){for(let i=0;i<n;i++)arr.push(new Particle(x,y,(Math.random()-0.5)*sp*2,(Math.random()-0.7)*sp*3,life+Math.random()*10,c,sz+Math.random()*2))}
+
+// ═══════════════════════════════════════════
+// LEVELS — carefully verified spawns on solid ground
+// ═══════════════════════════════════════════
+function makeLevels(){
+  const raw=[
+  {name:'森林初遇',w:30,h:18,map:[
+    '##############################',
+    '#                            #',
+    '#   1                        #',
+    '#   ###            D         #',
+    '#      B     B     #####     #',
+    '#   B      ###          E    #',
+    '#  ####         ##########   #',
+    '#      #        #            #',
+    '#  R   #   B    #     R      #',
+    '#  #   #  ####  #   #####    #',
+    '#  #   #  #  #  #   #        #',
+    '#  #      #  #      #        #',
+    '#  ########  ########        #',
+    '#            #     ##        #',
+    '#   R        #  2  ##        #',
+    '#  ####   ~~~~  ######^^^    #',
+    '#  ####   ######  ########   #',
+    '##############################',
+  ]},
+  {name:'交错之路',w:32,h:20,map:[
+    '################################',
+    '#                              #',
+    '#   1               D          #',
+    '#   ###    B       #####       #',
+    '#     #   ###          E       #',
+    '#     #    #       ########    #',
+    '#  B  #    #  R    #           #',
+    '#  #  #    ######  #    R      #',
+    '#  #  #        #   #  ######   #',
+    '#  #  #   P    #   #  #        #',
+    '#  #  ######   #   #  #  B     #',
+    '#  #       #   #   #  #  ##    #',
+    '#  #   R   #   #   #  #  #     #',
+    '#  ####### #   #   #  #  #     #',
+    '#          #   #      #  #     #',
+    '#    B     2   ########  #     #',
+    '#  ######  ######   ^^^^ #     #',
+    '#  ~~~~~~        ##########    #',
+    '#  ######        ########      #',
+    '################################',
+  ]},
+  {name:'潮汐挑战',w:32,h:22,map:[
+    '################################',
+    '#                              #',
+    '#   1               D          #',
+    '#   ####           #####       #',
+    '#       #          #           #',
+    '#   B   #    R     #     E     #',
+    '#   #   #  #####   #   #####   #',
+    '#   #   #  #   #   #   #       #',
+    '#   #   #  #   #   #   #  R    #',
+    '#   #   #  #   #   #   ######  #',
+    '#   #   #  #   #   #           #',
+    '#   #   #  #   #   #    B      #',
+    '#   #   #  #   #   ##########  #',
+    '#   #   #  #   #            #  #',
+    '#   #   #  #   #    P       #  #',
+    '#   #      #   ###########  #  #',
+    '#   ########  ###########  #  #',
+    '#                         ###  #',
+    '#  ~~~~~   !!!!!   ^^^^^ 2     #',
+    '#  #####   #####   ##### ###   #',
+    '#      B             R         #',
+    '################################',
+  ]},
+  {name:'分室迷局',w:36,h:24,map:[
+    '####################################',
+    '#                                  #',
+    '#   1                 D            #',
+    '#   ####             #####         #',
+    '#       #            #             #',
+    '#   B   #            #      E      #',
+    '#   #   #    R       #    #####    #',
+    '#   #   #  ######    #    #        #',
+    '#   #   #  #    #    #    #  R     #',
+    '#   #   #  #    #    #    ######   #',
+    '#   #   #  #    #    #         #   #',
+    '#   #   #  #    ######    B    #   #',
+    '#   #   #  #              ##   #   #',
+    '#   #   #  ~~~~~~~~~~~~~  ###  #   #',
+    '#   #   #  ##############       #   #',
+    '#   #   #                       #   #',
+    '#   #   #######   ############  #   #',
+    '#   #       #      #            #   #',
+    '#   #   P   #  2   #   P    R   #   #',
+    '#   ########  #######  ##########   #',
+    '#   ^^^^^^^^          ~~~~~~~~~~  #',
+    '#   ########          ##########  #',
+    '#       R                B         #',
+    '####################################',
+  ]},
+  {name:'最终试炼',w:38,h:26,map:[
+    '######################################',
+    '#                                    #',
+    '#   1                                #',
+    '#   ####           D                 #',
+    '#       #         #####              #',
+    '#   B   #         #                  #',
+    '#   #   #   R     #          E       #',
+    '#   #   # #####   #        ######    #',
+    '#   #   #     #   #        #         #',
+    '#   #   #  B  #   #   R    #   B     #',
+    '#   #   #  #  #   #######  #  ###    #',
+    '#   #   #  #  #        #  #  #       #',
+    '#   #   #  #  #   P    #  #  #  R    #',
+    '#   #   #  #  ######## #  #  #####   #',
+    '#   #   #  #           #  #          #',
+    '#   #   #  ##########  #  #   P      #',
+    '#   #   #           #  #  #####      #',
+    '#   #   #    B      #  #       2     #',
+    '#   #   ##########  #  #  ########   #',
+    '#   #            #  #  #  #          #',
+    '#   ##########   #  #  #  #    B     #',
+    '#                #     #             #',
+    '#   ~~~~~~~~~~~ #  ^^^^^^^^^^^^^^^  #',
+    '#   ########### #  ################  #',
+    '#           R                      #',
+    '######################################',
+  ]}];
+
+  // Auto-validate: ensure spawns are on solid ground
+  return raw.map(lv=>{
+    const rows=lv.map.map(r=>{let s=r;while(s.length<lv.w)s+=' ';return s.slice(0,lv.w)});
+    // Find spawn positions
+    let y1=null,y2=null;
+    for(let r=0;r<rows.length;r++){
+      for(let c=0;c<rows[r].length;c++){
+        if(rows[r][c]==='1'){lv.sy1=r;lv.sx1=c;y1=r}
+        if(rows[r][c]==='2'){lv.sy2=r;lv.sx2=c;y2=r}
+      }
+    }
+    // Ensure spawn is on solid ground: if tile below is hazard or air, move spawn up to nearest solid
+    function fixSpawn(sr,sc,ch){
+      if(sr==null)return{sr,sc};
+      // Check if spawn is already safe (ground below is #)
+      if(sr+1<rows.length && rows[sr+1][sc]==='#') return{sr,sc};
+      // Find nearest safe position above
+      for(let r=sr;r>=1;r--){
+        if(rows[r+1][sc]==='#' && rows[r][sc]===' '){
+          // Move the spawn marker
+          rows[sr]=rows[sr].substring(0,sc)+' '+rows[sr].substring(sc+1);
+          rows[r]=rows[r].substring(0,sc)+ch+rows[r].substring(sc+1);
+          return{sr:r,sc};
+        }
+      }
+      return{sr,sc};
+    }
+    const r1=fixSpawn(lv.sy1,lv.sx1,'1');
+    const r2=fixSpawn(lv.sy2,lv.sx2,'2');
+    lv.map=rows;
+    return lv;
+  });
+}
+const LEVELS=makeLevels();
+
+// ═══════════════════════════════════════════
 // MAP CLASS
-// ============================================================
+// ═══════════════════════════════════════════
 class GameMap{
   constructor(ld){
     this.w=ld.w;this.h=ld.h;this.pixelW=this.w*TILE;this.pixelH=this.h*TILE;
     this.tiles=[];this.gems=[];this.doors=[];this.pushBlocks=[];
-    const cm={'#':1,'~':2,'^':3,'!':4};
     for(let r=0;r<this.h;r++){
       this.tiles[r]=[];
       let ln=(ld.map[r]||'');while(ln.length<ld.w)ln+=' ';ln=ln.slice(0,ld.w);
-      for(let c=0;c<this.w;c++){
-        const ch=c<ln.length?ln[c]:' ';this.tiles[r][c]=cm[ch]||0;
-        const px=c*TILE+TILE/2,py=r*TILE+TILE/2;
-        if(ch==='B'){this.gems.push({x:px-8,y:py-8,w:16,h:16,type:'blue',collected:false});this.tiles[r][c]=0}
-        else if(ch==='R'){this.gems.push({x:px-8,y:py-8,w:16,h:16,type:'red',collected:false});this.tiles[r][c]=0}
-        else if(ch==='1'){this.spawnY={x:c*TILE,y:r*TILE};this.tiles[r][c]=0}
-        else if(ch==='2'){this.spawnB={x:c*TILE,y:r*TILE};this.tiles[r][c]=0}
-        else if(ch==='D'){this.doors.push({x:c*TILE,y:r*TILE,w:TILE,h:TILE,type:'yier',active:false});this.tiles[r][c]=0}
-        else if(ch==='E'){this.doors.push({x:c*TILE,y:r*TILE,w:TILE,h:TILE,type:'bubu',active:false});this.tiles[r][c]=0}
-        else if(ch==='P'){this.pushBlocks.push({x:c*TILE+2,y:r*TILE+2,w:TILE-4,h:TILE-4,active:true});this.tiles[r][c]=0}
+      for(let c=0;c<ld.w;c++){
+        const ch=ln[c],px=c*TILE+TILE/2,py=r*TILE+TILE/2;
+        if(ch==='#')this.tiles[r][c]=1;
+        else if(ch==='~')this.tiles[r][c]=2;
+        else if(ch==='^')this.tiles[r][c]=3;
+        else if(ch==='!')this.tiles[r][c]=4;
+        else this.tiles[r][c]=0;
+
+        if(ch==='B'){this.gems.push({x:px-9,y:py-9,w:18,h:18,type:'blue',ok:false});this.tiles[r][c]=0}
+        if(ch==='R'){this.gems.push({x:px-9,y:py-9,w:18,h:18,type:'red',ok:false});this.tiles[r][c]=0}
+        if(ch==='1'){this.spawnY={x:c*TILE,y:r*TILE};this.tiles[r][c]=0}
+        if(ch==='2'){this.spawnB={x:c*TILE,y:r*TILE};this.tiles[r][c]=0}
+        if(ch==='D'){this.doors.push({x:c*TILE+2,y:r*TILE+2,w:TILE-4,h:TILE-4,type:'yier',active:false});this.tiles[r][c]=0}
+        if(ch==='E'){this.doors.push({x:c*TILE+2,y:r*TILE+2,w:TILE-4,h:TILE-4,type:'bubu',active:false});this.tiles[r][c]=0}
+        if(ch==='P'){this.pushBlocks.push({x:c*TILE+3,y:r*TILE+3,w:TILE-6,h:TILE-6,ok:true});this.tiles[r][c]=0}
       }
     }
   }
-  get(c,r){if(c<0||c>=this.w||r<0||r>=this.h)return 1;return this.tiles[r]?.[c]??0}
+  solid(c,r){
+    if(c<0||c>=this.w||r<0||r>=this.h)return true;
+    return this.tiles[r][c]===1;
+  }
+  tile(c,r){if(c<0||c>=this.w||r<0||r>=this.h)return 1;return this.tiles[r][c]}
 
   update(t,players){
-    // Gems
     for(const g of this.gems){
-      if(g.collected)continue;const p=g.type==='blue'?players[0]:players[1];
+      if(g.ok)continue;const p=g.type==='blue'?players[0]:players[1];
       if(!p.alive)continue;
-      if(Math.abs(g.x+g.w/2-(p.x+p.w/2))<18&&Math.abs(g.y+g.h/2-(p.y+p.h/2))<22){g.collected=true;p.gems++}
+      if(Math.abs(g.x+g.w/2-(p.x+p.w/2))<18&&Math.abs(g.y+g.h/2-(p.y+p.h/2))<22){g.ok=true;p.gems++;sp(G.particles,g.x+g.w/2,g.y+g.h/2,10,g.type==='blue'?'#5b9cf5':'#ff6644',2,18,2)}
     }
-    // Doors
     for(const d of this.doors){
       const p=d.type==='yier'?players[0]:players[1];
-      if(!p.alive)continue;const act=Math.abs(d.x+d.w/2-(p.x+p.w/2))<18&&Math.abs(d.y+d.h/2-(p.y+p.h/2))<22;
-      d.active=act;p.atDoor=act;
+      if(!p.alive)continue;
+      const hit=Math.abs(d.x+d.w/2-(p.x+p.w/2))<16&&Math.abs(d.y+d.h/2-(p.y+p.h/2))<20;
+      d.active=hit;p.atDoor=hit;
     }
   }
 
@@ -518,373 +293,470 @@ class GameMap{
     const sc=Math.max(0,Math.floor(cam.x/TILE)-1),ec=Math.min(this.w,Math.floor((cam.x+cam.width)/TILE)+1);
     const sr=Math.max(0,Math.floor(cam.y/TILE)-1),er=Math.min(this.h,Math.floor((cam.y+cam.height)/TILE)+1);
     for(let r=sr;r<er;r++)for(let c=sc;c<ec;c++){
-      const x=c*TILE-cam.x,y=r*TILE-cam.y,ti=this.tiles[r]?.[c]??0;
+      const x=c*TILE-cam.x,y=r*TILE-cam.y,ti=this.tiles[r][c];
       if(ti===1)this._wall(x,y);
       else if(ti===2)this._water(x,y,t);
       else if(ti===3)this._lava(x,y,t);
       else if(ti===4)this._acid(x,y,t);
     }
-    // Push blocks
-    for(const b of this.pushBlocks){if(!b.active)continue;
+    for(const b of this.pushBlocks){if(!b.ok)continue;
       const x=b.x-cam.x,y=b.y-cam.y;
       ctx.fillStyle='#7B6350';ctx.fillRect(x,y,b.w,b.h);
-      ctx.strokeStyle='#5a4230';ctx.lineWidth=1.5;ctx.strokeRect(x,y,b.w,b.h);
+      ctx.strokeStyle='#5a3a20';ctx.lineWidth=2;ctx.strokeRect(x,y,b.w,b.h);
       ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+b.w,y+b.h);ctx.stroke();
       ctx.beginPath();ctx.moveTo(x+b.w,y);ctx.lineTo(x,y+b.h);ctx.stroke();
     }
-    // Gems
-    for(const g of this.gems){
-      if(g.collected)continue;
+    for(const g of this.gems){if(g.ok)continue;
       const x=g.x-cam.x,y=g.y-cam.y;
       ctx.save();ctx.translate(x+g.w/2,y+g.h/2);
-      ctx.rotate(t*0.003);ctx.scale(1+Math.sin(t*0.005+g.x)*0.12,1+Math.sin(t*0.005+g.x)*0.12);
-      ctx.fillStyle=g.type==='blue'?'#4d7cf7':'#ff5530';
-      ctx.beginPath();ctx.moveTo(0,-7.5);ctx.lineTo(5.5,0);ctx.lineTo(0,7.5);ctx.lineTo(-5.5,0);ctx.closePath();ctx.fill();
-      ctx.fillStyle='rgba(255,255,255,0.45)';
-      ctx.beginPath();ctx.moveTo(0,-7.5);ctx.lineTo(0,0);ctx.lineTo(-5.5,0);ctx.closePath();ctx.fill();
-      ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(0,0,2.2,0,Math.PI*2);ctx.fill();
+      ctx.rotate(t*0.003);const s=1+Math.sin(t*0.005+g.x)*0.1;ctx.scale(s,s);
+      ctx.fillStyle=g.type==='blue'?'#5b9cf5':'#ff5530';
+      ctx.beginPath();ctx.moveTo(0,-8);ctx.lineTo(6,0);ctx.lineTo(0,8);ctx.lineTo(-6,0);ctx.closePath();ctx.fill();
+      ctx.fillStyle='rgba(255,255,255,0.4)';
+      ctx.beginPath();ctx.moveTo(0,-8);ctx.lineTo(0,0);ctx.lineTo(-6,0);ctx.closePath();ctx.fill();
+      ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(0,0,2.5,0,Math.PI*2);ctx.fill();
       ctx.restore();
     }
-    // Doors
     for(const d of this.doors){
-      const x=d.x-cam.x,y=d.y-cam.y;
-      const glow=d.active?14:6;
-      ctx.save();ctx.shadowColor=d.type==='yier'?'#5b9cf5':'#ff6644';ctx.shadowBlur=glow;
-      ctx.fillStyle=d.type==='yier'?'#5b9cf5':'#ff6644';
-      ctx.fillRect(x+6,y+2,TILE-12,TILE-10);
+      const x=d.x-cam.x,y=d.y-cam.y,g=d.active?18:8;
+      ctx.save();ctx.shadowColor=d.type==='yier'?'#5b9cf5':'#ff5530';ctx.shadowBlur=g;
+      ctx.fillStyle=d.type==='yier'?'#5b9cf5':'#ff5530';
+      ctx.fillRect(x+4,y+2,TILE-12,TILE-10);
       ctx.fillStyle=d.type==='yier'?'#2a60b0':'#b03525';
-      ctx.fillRect(x+11,y+7,TILE-22,TILE-18);
-      ctx.fillStyle=d.type==='yier'?'#5b9cf5':'#ff6644';
-      ctx.beginPath();ctx.arc(x+TILE/2,y+18,TILE/2-6,Math.PI,0);ctx.fill();
+      ctx.fillRect(x+9,y+7,TILE-22,TILE-18);
+      ctx.fillStyle=d.type==='yier'?'#5b9cf5':'#ff5530';
+      ctx.beginPath();ctx.arc(x+TILE/2-2,y+16,TILE/2-6,Math.PI,0);ctx.fill();
+      if(d.active){ctx.fillStyle='#fff';ctx.font='bold 14px sans-serif';ctx.textAlign='center';ctx.fillText('✓',x+TILE/2-2,y+TILE-2)}
       ctx.restore();
     }
   }
-
   _wall(x,y){
     ctx.fillStyle='#4a3728';ctx.fillRect(x,y,TILE,TILE);
-    ctx.fillStyle='#6b5240';ctx.fillRect(x,y,TILE,3);
-    ctx.fillStyle='#2e1f14';ctx.fillRect(x,y+TILE-3,TILE,3);
-    ctx.strokeStyle='rgba(0,0,0,0.3)';ctx.lineWidth=0.5;ctx.strokeRect(x+0.5,y+0.5,TILE-1,TILE-1);
-    // Brick lines
-    ctx.strokeStyle='rgba(0,0,0,0.12)';ctx.lineWidth=0.5;
-    ctx.beginPath();ctx.moveTo(x,y+TILE/2);ctx.lineTo(x+TILE,y+TILE/2);ctx.stroke();
+    ctx.fillStyle='#6b5240';ctx.fillRect(x,y,TILE,4);
+    ctx.fillStyle='#2e1f14';ctx.fillRect(x,y+TILE-4,TILE,4);
+    ctx.strokeStyle='rgba(0,0,0,0.2)';ctx.lineWidth=0.5;ctx.strokeRect(x+0.5,y+0.5,TILE-1,TILE-1);
+    ctx.strokeStyle='rgba(0,0,0,0.08)';ctx.beginPath();ctx.moveTo(x,y+TILE/2);ctx.lineTo(x+TILE,y+TILE/2);ctx.stroke();
     for(let bx=x;bx<x+TILE;bx+=TILE/2){ctx.beginPath();ctx.moveTo(bx+TILE/4,y+TILE/2);ctx.lineTo(bx+TILE/4,y+TILE);ctx.stroke()}
   }
-
   _water(x,y,t){
-    const a=0.55+Math.sin(t*0.003+x*0.04)*0.1;
+    const a=0.45+Math.sin(t*0.003+x*0.04)*0.08;
     ctx.fillStyle=`rgba(30,144,255,${a})`;ctx.fillRect(x,y,TILE,TILE);
-    // Surface
-    ctx.fillStyle='rgba(77,184,255,0.7)';
-    for(let wx=0;wx<TILE;wx+=2){
-      const wy=3+Math.sin(t*0.004+(x+wx)*0.05)*2.5;
-      ctx.fillRect(x+wx,wy,2,2);
-    }
-    // Bottom wall edge (water sits in pit)
-    ctx.fillStyle='#4a3728';ctx.fillRect(x,y+TILE-2,TILE,2);
-    // Side ripple lines
-    ctx.strokeStyle='rgba(255,255,255,0.2)';ctx.lineWidth=1;
-    ctx.beginPath();
-    for(let i=0;i<=TILE;i+=4){const ry=y+14+Math.sin(t*0.006+(x+i)*0.07)*3;if(i===0)ctx.moveTo(x+i,ry);else ctx.lineTo(x+i,ry)}
-    ctx.stroke();
+    ctx.fillStyle='rgba(100,180,255,0.5)';
+    for(let wx=0;wx<TILE;wx+=3){const wy=3+Math.sin(t*0.004+(x+wx)*0.06)*2;ctx.fillRect(x+wx,wy,3,2)}
+    ctx.strokeStyle='rgba(255,255,255,0.15)';ctx.lineWidth=1;
+    ctx.beginPath();for(let i=0;i<=TILE;i+=4){const ry=y+16+Math.sin(t*0.006+(x+i)*0.07)*3;if(i===0)ctx.moveTo(x+i,ry);else ctx.lineTo(x+i,ry)}ctx.stroke();
+    ctx.fillStyle='#4a3728';ctx.fillRect(x,y+TILE-3,TILE,3);
   }
-
   _lava(x,y,t){
-    const a=0.6+Math.sin(t*0.005+x*0.03)*0.12;
+    const a=0.5+Math.sin(t*0.005+x*0.03)*0.1;
     ctx.fillStyle=`rgba(255,69,0,${a})`;ctx.fillRect(x,y,TILE,TILE);
-    // Glow top
-    ctx.fillStyle='rgba(255,140,0,0.6)';
-    for(let lx=0;lx<TILE;lx+=3){const ly=2+Math.sin(t*0.007+(x+lx)*0.05)*3;ctx.fillRect(x+lx,ly,4,3)}
-    // Bubbles
-    for(let i=0;i<2;i++){
-      const bx=x+10+i*18+Math.sin(t*0.009+i*3)*7,by=y+18+Math.sin(t*0.012+i*2.5)*6;
-      ctx.fillStyle='rgba(255,200,50,0.45)';ctx.beginPath();ctx.arc(bx,by,2.5,0,Math.PI*2);ctx.fill();
-    }
-    ctx.fillStyle='#4a3728';ctx.fillRect(x,y+TILE-2,TILE,2);
+    ctx.fillStyle='rgba(255,140,0,0.5)';
+    for(let lx=0;lx<TILE;lx+=4){const ly=3+Math.sin(t*0.007+(x+lx)*0.06)*2.5;ctx.fillRect(x+lx,ly,4,3)}
+    for(let i=0;i<2;i++){const bx=x+10+i*18+Math.sin(t*0.009+i*3)*7,by=y+16+Math.sin(t*0.012+i*2)*6;ctx.fillStyle='rgba(255,200,50,0.35)';ctx.beginPath();ctx.arc(bx,by,2.5,0,Math.PI*2);ctx.fill()}
+    ctx.fillStyle='#4a3728';ctx.fillRect(x,y+TILE-3,TILE,3);
   }
-
   _acid(x,y,t){
-    ctx.fillStyle=`rgba(50,205,50,0.55)`;ctx.fillRect(x,y,TILE,TILE);
-    ctx.fillStyle='rgba(127,255,0,0.5)';
-    for(let ax=0;ax<TILE;ax+=4){const ay=4+Math.sin(t*0.008+(x+ax)*0.05)*2;ctx.fillRect(x+ax,ay,3,2)}
-    ctx.fillStyle='#4a3728';ctx.fillRect(x,y+TILE-2,TILE,2);
+    ctx.fillStyle='rgba(50,205,50,0.45)';ctx.fillRect(x,y,TILE,TILE);
+    ctx.fillStyle='rgba(127,255,0,0.4)';
+    for(let ax=0;ax<TILE;ax+=5){const ay=4+Math.sin(t*0.008+(x+ax)*0.06)*2;ctx.fillRect(x+ax,ay,4,2)}
+    ctx.fillStyle='#4a3728';ctx.fillRect(x,y+TILE-3,TILE,3);
   }
 }
 
-// ============================================================
+// ═══════════════════════════════════════════
+// PLAYER — accurate simple sticker-style design
+// ═══════════════════════════════════════════
+class Player{
+  constructor(name,el,x,y){
+    this.name=name;this.el=el;this.sx=x;this.sy=y;this.x=x;this.y=y;
+    this.vx=0;this.vy=0;this.w=el==='water'?26:32;this.h=el==='water'?34:32;
+    this.onGround=false;this.alive=true;this.gems=0;this.atDoor=false;
+    this.facing=1;this.animT=0;this.idleT=0;this.jumpHeld=false
+  }
+  respawn(){
+    this.x=this.sx;this.y=this.sy;this.vx=0;this.vy=0;this.alive=true;
+    this.atDoor=false;this.onGround=false;this.gems=0;this.jumpHeld=false;
+  }
+
+  update(input,parts){
+    if(!this.alive)return;
+    let l=false,r=false,up=false,down=false;
+    if(this.el==='water'){
+      l=input.isDown('KeyA');r=input.isDown('KeyD');up=input.wasPressed('KeyW');down=input.isDown('KeyS');
+      if(!l&&!r&&!up&&!down&&input.hasTouch()){const d=input.getTouchDir('left');l=d.l;r=d.r;up=d.u;down=d.d}
+    }else{
+      l=input.isDown('ArrowLeft');r=input.isDown('ArrowRight');up=input.wasPressed('ArrowUp');down=input.isDown('ArrowDown');
+      if(!l&&!r&&!up&&!down&&input.hasTouch()){const d=input.getTouchDir('right');l=d.l;r=d.r;up=d.u;down=d.d}
+    }
+    if(l){this.vx-=0.5;this.facing=-1}if(r){this.vx+=0.5;this.facing=1}
+    if(!l&&!r)this.vx*=FRICTION;
+    this.vx=Math.max(-MAX_SPEED_X,Math.min(MAX_SPEED_X,this.vx));
+    if(up&&this.onGround){this.vy=JUMP_VEL;this.onGround=false;this.jumpHeld=true;sp(parts,this.x+this.w/2,this.y+this.h,5,this.el==='water'?'#aaddff':'#ffaa66',2,10,1.5)}
+    if(!input.isDown(this.el==='water'?'KeyW':'ArrowUp')&&this.jumpHeld&&this.vy<JUMP_VEL*0.5){this.vy=JUMP_VEL*0.5;this.jumpHeld=false}
+    if(this.onGround)this.jumpHeld=false;
+    this.vy+=GRAVITY;this.vy=Math.min(this.vy,MAX_SPEED_Y);
+    this._mx();this._my();
+    if(this.y>G.map.pixelH+150)this._die(parts);
+    if(!this.onGround)this.animT+=0.15;else if(l||r)this.animT+=0.18;else{this.animT=0;this.idleT++}
+  }
+
+  _mx(){
+    this.x+=this.vx;
+    for(let r=Math.floor(this.y/TILE);r<=Math.floor((this.y+this.h-1)/TILE);r++)
+      for(let c=Math.floor(this.x/TILE);c<=Math.floor((this.x+this.w-1)/TILE);c++)
+        if(G.map.solid(c,r)){if(this.vx>0)this.x=c*TILE-this.w;else if(this.vx<0)this.x=(c+1)*TILE;this.vx=0}
+    for(const b of G.map.pushBlocks){if(!b.ok||!this._aabb(b))continue;
+      const d=this.vx>0?1:-1,nx=b.x+d*2;let blk=false;
+      for(let r=Math.floor(b.y/TILE);r<=Math.floor((b.y+b.h-1)/TILE);r++)
+        for(let c=Math.floor(nx/TILE);c<=Math.floor((nx+b.w-1)/TILE);c++)
+          if(G.map.solid(c,r))blk=true;
+      for(const ob of G.map.pushBlocks){if(ob!==b&&ob.ok&&nx<ob.x+ob.w&&nx+b.w>ob.x&&b.y<ob.y+ob.h&&b.y+b.h>ob.y)blk=true}
+      if(blk){if(this.vx>0)this.x=b.x-this.w;else if(this.vx<0)this.x=b.x+b.w;this.vx=0}else b.x+=d*2;
+    }
+  }
+
+  _my(){
+    this.y+=this.vy;this.onGround=false;
+    for(let r=Math.floor(this.y/TILE);r<=Math.floor((this.y+this.h-1)/TILE);r++)
+      for(let c=Math.floor(this.x/TILE);c<=Math.floor((this.x+this.w-1)/TILE);c++)
+        if(G.map.solid(c,r)){if(this.vy>0){this.y=r*TILE-this.h;this.onGround=true;this.vy=0}else if(this.vy<0){this.y=(r+1)*TILE;this.vy=0}}
+    for(const b of G.map.pushBlocks){if(!b.ok||this.x+this.w<=b.x||this.x>=b.x+b.w)continue;
+      if(this.vy>0&&this.y+this.h>=b.y&&this.y+this.h-this.vy<=b.y+4){this.y=b.y-this.h;this.onGround=true;this.vy=0}
+      else if(this.vy<0&&this.y<=b.y+b.h&&this.y-this.vy>=b.y+b.h-4){this.y=b.y+b.h;this.vy=0}}
+    for(let r=Math.floor(this.y/TILE);r<=Math.floor((this.y+this.h-1)/TILE);r++)
+      for(let c=Math.floor(this.x/TILE);c<=Math.floor((this.x+this.w-1)/TILE);c++){
+        const t=G.map.tile(c,r);if(t===2&&this.el==='fire')this._die(G.particles);if(t===3&&this.el==='water')this._die(G.particles);if(t===4)this._die(G.particles);
+      }
+  }
+
+  _aabb(b){return this.x<b.x+b.w&&this.x+this.w>b.x&&this.y<b.y+b.h&&this.y+this.h>b.y}
+  _die(p){if(!this.alive)return;this.alive=false;sp(p,this.x+this.w/2,this.y+this.h/2,25,this.el==='water'?'#aaddff':'#ff6633',4,30,3)}
+
+  // ═══════════════════════════════════
+  // SIMPLE STICKER-STYLE RENDERING
+  // ═══════════════════════════════════
+  render(ctx,cam,t){
+    if(!this.alive)return;
+    const sx=this.x-cam.x,sy=this.y-cam.y;
+    if(sx<-70||sx>cam.width+70||sy<-70||sy>cam.height+70)return;
+    ctx.save();ctx.translate(sx+this.w/2,sy+this.h/2);
+    if(this.el==='water')this._yier(ctx,t);
+    else this._bubu(ctx,t);
+    ctx.restore();
+  }
+
+  // ─── 一二: White Panda with bow tie ───
+  _yier(ctx,t){
+    const br=1+Math.sin(t*0.002+this.idleT*0.015)*0.02;
+    ctx.scale(br,br);
+    const bodyY=4, headY=-4;
+
+    // SHADOW
+    ctx.fillStyle='rgba(0,0,0,0.1)';
+    ctx.beginPath();ctx.ellipse(0,this.h/2-2,10,3.5,0,0,Math.PI*2);ctx.fill();
+
+    // BLACK FEET
+    ctx.fillStyle='#1a1a1a';
+    ctx.beginPath();ctx.ellipse(-5.5,this.h/2-3,4.2,4,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(5.5,this.h/2-3,4.2,4,0,0,Math.PI*2);ctx.fill();
+
+    // WHITE BODY
+    ctx.fillStyle='#fefefe';
+    ctx.beginPath();ctx.ellipse(0,bodyY,11,13.5,0,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#ddd';ctx.lineWidth=0.5;
+    ctx.beginPath();ctx.ellipse(0,bodyY,11,13.5,0,0,Math.PI*2);ctx.stroke();
+
+    // WHITE ARMS (short stubby, no fingers)
+    const as=Math.sin(this.animT*0.8)*2;
+    ctx.fillStyle='#fefefe';ctx.strokeStyle='#ddd';ctx.lineWidth=0.4;
+    ctx.save();ctx.translate(-12,bodyY-1+as);
+    ctx.beginPath();ctx.ellipse(0,0,3.5,7,0,0,Math.PI*2);ctx.fill();ctx.stroke();
+    ctx.restore();
+    ctx.save();ctx.translate(12,bodyY-1-as);
+    ctx.beginPath();ctx.ellipse(0,0,3.5,7,0,0,Math.PI*2);ctx.fill();ctx.stroke();
+    ctx.restore();
+
+    // BLACK EARS (solid round)
+    ctx.fillStyle='#1a1a1a';
+    ctx.beginPath();ctx.arc(-8.5,-11.5,5.5,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(8.5,-11.5,5.5,0,Math.PI*2);ctx.fill();
+
+    // HEAD (white circle)
+    ctx.fillStyle='#fefefe';
+    ctx.beginPath();ctx.arc(0,headY,12,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#ddd';ctx.lineWidth=0.5;
+    ctx.beginPath();ctx.arc(0,headY,12,0,Math.PI*2);ctx.stroke();
+
+    // PANDA EYE PATCHES (subtle grey ovals)
+    ctx.fillStyle='#1a1a1a';
+    ctx.beginPath();ctx.ellipse(-4.2,headY-2,3.3,4.2,-0.2,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(4.2,headY-2,3.3,4.2,0.2,0,Math.PI*2);ctx.fill();
+    // Large white eyes inside patches
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.ellipse(-4.2,headY-2.5,2,2.5,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(4.2,headY-2.5,2,2.5,0,0,Math.PI*2);ctx.fill();
+    // Dark pupils
+    ctx.fillStyle='#111';
+    ctx.beginPath();ctx.arc(-3.6,headY-2,1.1,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(4.8,headY-2,1.1,0,Math.PI*2);ctx.fill();
+    // Eye sparkle
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(-3.1,headY-2.6,0.5,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(5.3,headY-2.6,0.5,0,Math.PI*2);ctx.fill();
+
+    // NOSE (tiny dark dot)
+    ctx.fillStyle='#1a1a1a';
+    ctx.beginPath();ctx.arc(0,headY+3.5,1.1,0,Math.PI*2);ctx.fill();
+
+    // MOUTH (cute small smile)
+    ctx.strokeStyle='#555';ctx.lineWidth=0.6;
+    ctx.beginPath();ctx.arc(0,headY+5.5,2.2,0.12,Math.PI-0.12);ctx.stroke();
+
+    // SUBTLE BLUSH
+    ctx.fillStyle='rgba(255,155,155,0.2)';
+    ctx.beginPath();ctx.ellipse(-7.5,headY+2.5,2.2,1.6,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(7.5,headY+2.5,2.2,1.6,0,0,Math.PI*2);ctx.fill();
+
+    // ── BLACK BOW TIE (ICONIC, always worn!) ──
+    ctx.fillStyle='#1a1a1a';
+    ctx.beginPath();ctx.moveTo(0,bodyY-3);ctx.lineTo(-5.5,bodyY-7.5);ctx.lineTo(-5.5,bodyY+1.5);ctx.closePath();ctx.fill();
+    ctx.beginPath();ctx.moveTo(0,bodyY-3);ctx.lineTo(5.5,bodyY-7.5);ctx.lineTo(5.5,bodyY+1.5);ctx.closePath();ctx.fill();
+    ctx.beginPath();ctx.arc(0,bodyY-3,2,0,Math.PI*2);ctx.fill();
+  }
+
+  // ─── 布布: Brown Bear with pink blush ───
+  _bubu(ctx,t){
+    const br=1+Math.sin(t*0.002+this.idleT*0.015)*0.02;
+    ctx.scale(br,br);
+    const bodyY=3, headY=-3;
+
+    // SHADOW
+    ctx.fillStyle='rgba(0,0,0,0.1)';
+    ctx.beginPath();ctx.ellipse(0,this.h/2-2,13,4,0,0,Math.PI*2);ctx.fill();
+
+    // BROWN FEET
+    ctx.fillStyle='#5C3A1E';
+    ctx.beginPath();ctx.ellipse(-7.5,this.h/2-2.5,5,3.5,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(7.5,this.h/2-2.5,5,3.5,0,0,Math.PI*2);ctx.fill();
+
+    // CHUBBY BROWN BODY (wider than 一二)
+    ctx.fillStyle='#8B5E3C';
+    ctx.beginPath();ctx.ellipse(0,bodyY,14.5,12.5,0,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#6b4530';ctx.lineWidth=0.5;
+    ctx.beginPath();ctx.ellipse(0,bodyY,14.5,12.5,0,0,Math.PI*2);ctx.stroke();
+
+    // LIGHTER BELLY
+    ctx.fillStyle='#A0724A';
+    ctx.beginPath();ctx.ellipse(0,bodyY+2.5,9,7.5,0,0,Math.PI*2);ctx.fill();
+
+    // STUBBY BROWN ARMS
+    const as=Math.sin(this.animT*0.8)*1.5;
+    ctx.fillStyle='#8B5E3C';ctx.strokeStyle='#6b4530';ctx.lineWidth=0.4;
+    ctx.save();ctx.translate(-15.5,bodyY-1+as);
+    ctx.beginPath();ctx.ellipse(0,0,4,7.5,0,0,Math.PI*2);ctx.fill();ctx.stroke();
+    ctx.restore();
+    ctx.save();ctx.translate(15.5,bodyY-1-as);
+    ctx.beginPath();ctx.ellipse(0,0,4,7.5,0,0,Math.PI*2);ctx.fill();ctx.stroke();
+    ctx.restore();
+
+    // EARS (brown round, lighter inside)
+    ctx.fillStyle='#8B5E3C';
+    ctx.beginPath();ctx.arc(-10,-9.5,6,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(10,-9.5,6,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#C4956A';
+    ctx.beginPath();ctx.arc(-10,-9.5,3.2,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(10,-9.5,3.2,0,Math.PI*2);ctx.fill();
+
+    // HEAD (large brown circle)
+    ctx.fillStyle='#8B5E3C';
+    ctx.beginPath();ctx.arc(0,headY,14,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#6b4530';ctx.lineWidth=0.5;
+    ctx.beginPath();ctx.arc(0,headY,14,0,Math.PI*2);ctx.stroke();
+
+    // CREAM SNOUT/MUZZLE
+    ctx.fillStyle='#D4A574';
+    ctx.beginPath();ctx.ellipse(0,headY+1.5,7.2,5.8,0,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#c09060';ctx.lineWidth=0.3;
+    ctx.beginPath();ctx.ellipse(0,headY+1.5,7.2,5.8,0,0,Math.PI*2);ctx.stroke();
+
+    // DARK OVAL NOSE
+    ctx.fillStyle='#3a1f0a';
+    ctx.beginPath();ctx.ellipse(0,headY-0.8,2.8,1.8,0,0,Math.PI*2);ctx.fill();
+    // Nose highlight
+    ctx.fillStyle='rgba(255,255,255,0.25)';
+    ctx.beginPath();ctx.arc(-0.5,headY-1.5,0.7,0,Math.PI*2);ctx.fill();
+
+    // SMALL DARK EYES
+    ctx.fillStyle='#3a1f0a';
+    ctx.beginPath();ctx.arc(-5,headY-3,1.6,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(5,headY-3,1.6,0,Math.PI*2);ctx.fill();
+    // Eye highlights
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(-4.4,headY-3.5,0.6,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(5.6,headY-3.5,0.6,0,Math.PI*2);ctx.fill();
+
+    // ── PINK BLUSH (布布's signature feature!) ──
+    ctx.fillStyle='rgba(255,140,140,0.4)';
+    ctx.beginPath();ctx.ellipse(-9,headY+2.5,3.3,2.3,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(9,headY+2.5,3.3,2.3,0,0,Math.PI*2);ctx.fill();
+
+    // SMALL SMILE
+    ctx.strokeStyle='#5C3A1E';ctx.lineWidth=0.6;
+    ctx.beginPath();ctx.arc(0,headY+4,2.8,0.1,Math.PI-0.1);ctx.stroke();
+  }
+}
+
+// ═══════════════════════════════════════════
 // CAMERA
-// ============================================================
+// ═══════════════════════════════════════════
 class Camera{
-  constructor(w,h,mw,mh){this.width=w;this.height=h;this.mapW=mw;this.mapH=mh;this.x=0;this.y=0}
-  update(players){
-    let cx=0,cy=0,n=0;
-    for(const p of players){if(!p.alive)continue;cx+=p.x+p.w/2;cy+=p.y+p.h/2;n++}
-    if(n>0){cx/=n;cy/=n}else{cx=this.mapW/2;cy=this.mapH/2}
+  constructor(w,h,mw,mh){this.width=w;this.height=h;this.mw=mw;this.mh=mh;this.x=0;this.y=0}
+  update(ps){
+    let cx=0,cy=0,n=0;for(const p of ps){if(!p.alive)continue;cx+=p.x+p.w/2;cy+=p.y+p.h/2;n++}
+    if(n>0){cx/=n;cy/=n}else{cx=this.mw/2;cy=this.mh/2}
     const tx=cx-this.width/2,ty=cy-this.height/2+40;
     this.x+=(tx-this.x)*0.1;this.y+=(ty-this.y)*0.1;
-    this.x=Math.max(0,Math.min(this.x,this.mapW-this.width));
-    this.y=Math.max(0,Math.min(this.y,this.mapH-this.height));
+    this.x=Math.max(0,Math.min(this.x,this.mw-this.width));
+    this.y=Math.max(0,Math.min(this.y,this.mh-this.height));
   }
 }
 
-// ============================================================
-// UI RENDERING
-// ============================================================
-function drawHUD(ctx,g,t){
-  // Bar
-  ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,LOGICAL_W,40);
+// ═══════════════════════════════════════════
+// UI
+// ═══════════════════════════════════════════
+function drawHUD(ctx,g){
+  ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,LOGICAL_W,38);
   ctx.fillStyle='#FFD700';ctx.font='bold 14px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='left';
-  ctx.fillText(`第${g.lvlIdx+1}关: ${LEVELS[g.lvlIdx].nameZh}`,10,27);
-  const p1=g.players[0],p2=g.players[1];
+  ctx.fillText(`第${g.lvlIdx+1}关: ${LEVELS[g.lvlIdx].name}`,10,27);
+  const p1=g.players[0],p2=g.players[1],m=g.map;
+  const tb=m.gems.filter(x=>x.type==='blue').length,tr=m.gems.filter(x=>x.type==='red').length;
   ctx.fillStyle='#5b9cf5';ctx.font='13px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='right';
-  const totalB=g.map.gems.filter(x=>x.type==='blue').length,totalR=g.map.gems.filter(x=>x.type==='red').length;
-  ctx.fillText(`💎 一二: ${p1.gems}/${totalB}`,LOGICAL_W-245,27);
+  ctx.fillText(`一二: ${p1.gems}/${tb}`,LOGICAL_W-240,27);
   ctx.fillStyle='#ff6644';
-  ctx.fillText(`💎 布布: ${p2.gems}/${totalR}`,LOGICAL_W-130,27);
-  ctx.fillStyle='rgba(255,255,255,0.45)';ctx.font='10px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.fillText('R=重置 ESC=菜单',LOGICAL_W-8,38);
+  ctx.fillText(`布布: ${p2.gems}/${tr}`,LOGICAL_W-125,27);
+  ctx.fillStyle='rgba(255,255,255,0.4)';ctx.font='10px "Microsoft YaHei","PingFang SC",sans-serif';
+  ctx.fillText('R=重置 ESC=菜单',LOGICAL_W-8,36);
 }
+
+function btn(ctx,x,y,w,h){ctx.beginPath();const r=8;ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.arcTo(x+w,y,x+w,y+r,r);ctx.lineTo(x+w,y+h-r);ctx.arcTo(x+w,y+h,x+w-r,y+h,r);ctx.lineTo(x+r,y+h);ctx.arcTo(x,y+h,x,y+h-r,r);ctx.lineTo(x,y+r);ctx.arcTo(x,y,x+r,y,r);ctx.closePath();ctx.fill();ctx.strokeStyle='rgba(255,255,255,0.3)';ctx.lineWidth=1.5;ctx.stroke()}
 
 function drawMenu(ctx,g){
-  ctx.fillStyle='rgba(10,10,26,0.93)';ctx.fillRect(0,0,LOGICAL_W,LOGICAL_H);
+  ctx.fillStyle='rgba(10,10,26,0.94)';ctx.fillRect(0,0,LOGICAL_W,LOGICAL_H);
   ctx.fillStyle='#FFD700';ctx.font='bold 34px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='center';
-  ctx.fillText('森林冰火人',LOGICAL_W/2,120);
-  ctx.fillStyle='#fff';ctx.font='bold 18px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.fillText('～ 布布 & 一二 ～',LOGICAL_W/2,158);
+  ctx.fillText('森林冰火人',LOGICAL_W/2,110);
+  ctx.textAlign='center';ctx.fillStyle='#fff';ctx.font='bold 17px "Microsoft YaHei","PingFang SC",sans-serif';
+  ctx.fillText('～ 布布 & 一二 ～',LOGICAL_W/2,148);
 
-  // Draw characters
+  // Draw accurate sticker-style characters
   const t=g.time||0;
-  ctx.save();ctx.translate(LOGICAL_W/2-85,245);
-  const dummy1=new Player('一二','water',0,0);dummy1.idleT=t*60;
-  dummy1._drawYier(ctx,t);ctx.restore();
-  ctx.save();ctx.translate(LOGICAL_W/2+85,245);
-  const dummy2=new Player('布布','fire',0,0);dummy2.idleT=t*60+15;
-  dummy2._drawBubu(ctx,t);ctx.restore();
+  ctx.save();ctx.translate(LOGICAL_W/2-100,245);
+  const d1=new Player('一二','water',0,0);d1.idleT=t*60;
+  d1._yier(ctx,t);ctx.restore();
+  ctx.save();ctx.translate(LOGICAL_W/2+100,245);
+  const d2=new Player('布布','fire',0,0);d2.idleT=t*60+15;
+  d2._bubu(ctx,t);ctx.restore();
 
+  ctx.textAlign='center';
   ctx.fillStyle='#aaddff';ctx.font='12px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.fillText('一二 (水/冰) · W A S D',LOGICAL_W/2-85,292);
+  ctx.fillText('一二 (水/冰)  W A S D',LOGICAL_W/2-100,295);
   ctx.fillStyle='#ffaa66';
-  ctx.fillText('布布 (火) · ↑ ← ↓ →',LOGICAL_W/2+85,292);
+  ctx.fillText('布布 (火)  ↑ ← ↓ →',LOGICAL_W/2+100,295);
 
   const bx=LOGICAL_W/2-90,bw=180,bh=44;
-  // Start button
-  ctx.fillStyle='#FFD700';_btn(ctx,bx,360,bw,bh);ctx.fillStyle='#1a1a2e';
-  ctx.font='bold 17px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='center';ctx.fillText('开始游戏',LOGICAL_W/2,388);
-  // Level select
-  ctx.fillStyle='#5a5a8a';_btn(ctx,bx,418,bw,bh);ctx.fillStyle='#fff';
-  ctx.font='bold 15px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('关卡选择',LOGICAL_W/2,446);
-  g._btns=[{x:bx,y:360,w:bw,h:bh,act:'start'},{x:bx,y:418,w:bw,h:bh,act:'levels'}];
+  ctx.fillStyle='#FFD700';btn(ctx,bx,355,bw,bh);ctx.fillStyle='#1a1a2e';ctx.font='bold 17px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('开始游戏',LOGICAL_W/2,383);
+  ctx.fillStyle='#5a5a8a';btn(ctx,bx,413,bw,bh);ctx.fillStyle='#fff';ctx.font='bold 15px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('关卡选择',LOGICAL_W/2,441);
+  g._btns=[{x:bx,y:355,w:bw,h:bh,act:'start'},{x:bx,y:413,w:bw,h:bh,act:'levels'}];
   ctx.fillStyle='rgba(255,255,255,0.35)';ctx.font='10px "Microsoft YaHei","PingFang SC",sans-serif';
-  ctx.fillText('🐼 一二 & 🐻 布布 © 黄小B | 游戏改编',LOGICAL_W/2,LOGICAL_H-15);
+  ctx.fillText('🐼 一二 & 🐻 布布 © 黄小B | 游戏改编',LOGICAL_W/2,LOGICAL_H-12);
 }
 
-function drawLevelSelect(ctx,g){
-  ctx.fillStyle='rgba(10,10,26,0.93)';ctx.fillRect(0,0,LOGICAL_W,LOGICAL_H);
-  ctx.fillStyle='#FFD700';ctx.font='bold 26px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='center';
-  ctx.fillText('关卡选择',LOGICAL_W/2,55);
-  const cols=3,bw=180,bh=66,gx=25,gy=20,sx=(LOGICAL_W-(cols*bw+(cols-1)*gx))/2,sy=90;
+function drawLevels(ctx,g){
+  ctx.fillStyle='rgba(10,10,26,0.94)';ctx.fillRect(0,0,LOGICAL_W,LOGICAL_H);
+  ctx.fillStyle='#FFD700';ctx.font='bold 26px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='center';ctx.fillText('关卡选择',LOGICAL_W/2,52);
+  const cols=3,bw=170,bh=62,gx=22,gy=18,sx=(LOGICAL_W-(cols*bw+(cols-1)*gx))/2,sy=85;
   g._btns=[];
   for(let i=0;i<LEVELS.length;i++){
     const cx=sx+(i%cols)*(bw+gx),cy=sy+Math.floor(i/cols)*(bh+gy);
-    ctx.fillStyle=i<=g.maxLvl?'#4a4a6a':'#2a2a3a';_btn(ctx,cx,cy,bw,bh);
-    ctx.fillStyle=i<=g.maxLvl?'#fff':'#666';ctx.font='bold 15px "Microsoft YaHei","PingFang SC",sans-serif';
-    ctx.fillText(`第${i+1}关`,cx+bw/2,cy+26);
-    ctx.fillStyle=i<=g.maxLvl?'#FFD700':'#555';ctx.font='11px "Microsoft YaHei","PingFang SC",sans-serif';
-    ctx.fillText(LEVELS[i].nameZh,cx+bw/2,cy+48);
+    ctx.fillStyle=i<=g.maxLvl?'#4a4a6a':'#2a2a3a';btn(ctx,cx,cy,bw,bh);
+    ctx.fillStyle=i<=g.maxLvl?'#fff':'#666';ctx.font='bold 15px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='center';ctx.fillText(`第${i+1}关`,cx+bw/2,cy+24);
+    ctx.fillStyle=i<=g.maxLvl?'#FFD700':'#555';ctx.font='11px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText(LEVELS[i].name,cx+bw/2,cy+46);
     if(i<=g.maxLvl)g._btns.push({x:cx,y:cy,w:bw,h:bh,act:'load',lvl:i});
   }
-  // Back
-  const bx=LOGICAL_W/2-60,by=LOGICAL_H-65;
-  ctx.fillStyle='#555';_btn(ctx,bx,by,120,38);
-  ctx.fillStyle='#fff';ctx.font='13px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('返回菜单',LOGICAL_W/2,by+26);
-  g._btns.push({x:bx,y:by,w:120,h:38,act:'menu'});
-}
-
-function _btn(ctx,x,y,w,h){
-  ctx.beginPath();const r=8;
-  ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.arcTo(x+w,y,x+w,y+r,r);
-  ctx.lineTo(x+w,y+h-r);ctx.arcTo(x+w,y+h,x+w-r,y+h,r);
-  ctx.lineTo(x+r,y+h);ctx.arcTo(x,y+h,x,y+h-r,r);
-  ctx.lineTo(x,y+r);ctx.arcTo(x,y,x+r,y,r);
-  ctx.closePath();ctx.fill();ctx.strokeStyle='rgba(255,255,255,0.3)';ctx.lineWidth=1.5;ctx.stroke();
+  const bx=LOGICAL_W/2-60,by=LOGICAL_H-62;
+  ctx.fillStyle='#555';btn(ctx,bx,by,120,36);ctx.fillStyle='#fff';ctx.font='13px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='center';ctx.fillText('返回菜单',LOGICAL_W/2,by+24);
+  g._btns.push({x:bx,y:by,w:120,h:36,act:'menu'});
 }
 
 function drawOverlay(ctx,g){
-  ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,LOGICAL_W,LOGICAL_H);
-  if(g.state==='DEAD'){
-    ctx.fillStyle='#fff';ctx.font='bold 22px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='center';
-    ctx.fillText('💀 有人受伤了！',LOGICAL_W/2,LOGICAL_H/2-10);
-    ctx.font='13px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('即将重新开始…',LOGICAL_W/2,LOGICAL_H/2+20);
-  }else if(g.state==='LVLCOMPLETE'){
-    ctx.fillStyle='#FFD700';ctx.font='bold 28px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='center';
-    ctx.fillText('🎉 通关成功！',LOGICAL_W/2,LOGICAL_H/2-25);
-    ctx.fillStyle='#fff';ctx.font='14px "Microsoft YaHei","PingFang SC",sans-serif';
-    ctx.fillText(`一二 💎${g.players[0].gems}  |  布布 💎${g.players[1].gems}`,LOGICAL_W/2,LOGICAL_H/2+12);
-    ctx.fillText('进入下一关…',LOGICAL_W/2,LOGICAL_H/2+36);
-  }else if(g.state==='PAUSED'){
-    ctx.fillStyle='#fff';ctx.font='bold 26px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='center';
-    ctx.fillText('游戏暂停',LOGICAL_W/2,LOGICAL_H/2-10);
-    ctx.font='14px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('ESC 继续 | R 重新开始',LOGICAL_W/2,LOGICAL_H/2+22);
-  }else if(g.state==='WIN'){
-    ctx.fillStyle='#FFD700';ctx.font='bold 30px "Microsoft YaHei","PingFang SC",sans-serif';ctx.textAlign='center';
-    ctx.fillText('🏆 全部通关！',LOGICAL_W/2,LOGICAL_H/2-30);
-    ctx.fillStyle='#fff';ctx.font='16px "Microsoft YaHei","PingFang SC",sans-serif';
-    ctx.fillText('恭喜！布布和一二完成了所有冒险！',LOGICAL_W/2,LOGICAL_H/2+8);
-    ctx.font='13px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('感谢游玩～',LOGICAL_W/2,LOGICAL_H/2+32);
-    const bx=LOGICAL_W/2-80,by=LOGICAL_H/2+50;
-    ctx.fillStyle='#FFD700';_btn(ctx,bx,by,160,42);ctx.fillStyle='#1a1a2e';
-    ctx.font='bold 15px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('返回菜单',LOGICAL_W/2,by+29);
-    g._btns=[{x:bx,y:by,w:160,h:42,act:'menu'}];
-  }
+  ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,LOGICAL_W,LOGICAL_H);ctx.textAlign='center';
+  if(g.state==='DEAD'){ctx.fillStyle='#fff';ctx.font='bold 20px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('💀 有人受伤了！',LOGICAL_W/2,LOGICAL_H/2-8);ctx.font='13px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('即将重新开始…',LOGICAL_W/2,LOGICAL_H/2+22)}
+  else if(g.state==='LVLCOMPLETE'){ctx.fillStyle='#FFD700';ctx.font='bold 26px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('🎉 通关成功！',LOGICAL_W/2,LOGICAL_H/2-22);ctx.fillStyle='#fff';ctx.font='14px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText(`一二 💎${g.players[0].gems}  |  布布 💎${g.players[1].gems}`,LOGICAL_W/2,LOGICAL_H/2+12);ctx.fillText('进入下一关…',LOGICAL_W/2,LOGICAL_H/2+34)}
+  else if(g.state==='PAUSED'){ctx.fillStyle='#fff';ctx.font='bold 24px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('游戏暂停',LOGICAL_W/2,LOGICAL_H/2-8);ctx.font='14px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('ESC 继续 | R 重新开始',LOGICAL_W/2,LOGICAL_H/2+20)}
+  else if(g.state==='WIN'){ctx.fillStyle='#FFD700';ctx.font='bold 28px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('🏆 全部通关！',LOGICAL_W/2,LOGICAL_H/2-28);ctx.fillStyle='#fff';ctx.font='15px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('恭喜！布布和一二完成了所有冒险！',LOGICAL_W/2,LOGICAL_H/2+8);ctx.font='13px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('感谢游玩～',LOGICAL_W/2,LOGICAL_H/2+30);const bx=LOGICAL_W/2-80,by=LOGICAL_H/2+50;ctx.fillStyle='#FFD700';btn(ctx,bx,by,160,40);ctx.fillStyle='#1a1a2e';ctx.font='bold 15px "Microsoft YaHei","PingFang SC",sans-serif';ctx.fillText('返回菜单',LOGICAL_W/2,by+27);g._btns=[{x:bx,y:by,w:160,h:40,act:'menu'}];}
 }
 
-function drawTouchCtrls(ctx,g){
+function drawTouch(ctx,g){
   if(g.state!=='PLAYING'||!g.input.hasTouch())return;
-  const r=45;
-  function dpad(cx,cy,label){
-    ctx.fillStyle='rgba(255,255,255,0.1)';ctx.strokeStyle='rgba(255,255,255,0.25)';ctx.lineWidth=2;
-    ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fill();ctx.stroke();
-    const s=9;
-    ctx.fillStyle='rgba(255,255,255,0.4)';
-    ctx.beginPath();ctx.moveTo(cx,cy-r+7);ctx.lineTo(cx-s,cy-r+7+s*1.5);ctx.lineTo(cx+s,cy-r+7+s*1.5);ctx.fill();
-    ctx.beginPath();ctx.moveTo(cx,cy+r-7);ctx.lineTo(cx-s,cy+r-7-s*1.5);ctx.lineTo(cx+s,cy+r-7-s*1.5);ctx.fill();
-    ctx.beginPath();ctx.moveTo(cx-r+7,cy);ctx.lineTo(cx-r+7+s*1.5,cy-s);ctx.lineTo(cx-r+7+s*1.5,cy+s);ctx.fill();
-    ctx.beginPath();ctx.moveTo(cx+r-7,cy);ctx.lineTo(cx+r-7-s*1.5,cy-s);ctx.lineTo(cx+r-7-s*1.5,cy+s);ctx.fill();
-    ctx.fillStyle='rgba(255,255,255,0.55)';ctx.font='10px sans-serif';ctx.textAlign='center';ctx.fillText(label,cx,cy+r+16);
-  }
-  dpad(LOGICAL_W/4,LOGICAL_H*0.68,'一二');
-  dpad(LOGICAL_W*3/4,LOGICAL_H*0.68,'布布');
+  function dpad(cx,cy,lb){ctx.fillStyle='rgba(255,255,255,0.08)';ctx.strokeStyle='rgba(255,255,255,0.2)';ctx.lineWidth=2;ctx.beginPath();ctx.arc(cx,cy,42,0,Math.PI*2);ctx.fill();ctx.stroke();const s=8;ctx.fillStyle='rgba(255,255,255,0.35)';ctx.beginPath();ctx.moveTo(cx,cy-42+6);ctx.lineTo(cx-s,cy-42+6+s*1.3);ctx.lineTo(cx+s,cy-42+6+s*1.3);ctx.fill();ctx.beginPath();ctx.moveTo(cx,cy+42-6);ctx.lineTo(cx-s,cy+42-6-s*1.3);ctx.lineTo(cx+s,cy+42-6-s*1.3);ctx.fill();ctx.beginPath();ctx.moveTo(cx-42+6,cy);ctx.lineTo(cx-42+6+s*1.3,cy-s);ctx.lineTo(cx-42+6+s*1.3,cy+s);ctx.fill();ctx.beginPath();ctx.moveTo(cx+42-6,cy);ctx.lineTo(cx+42-6-s*1.3,cy-s);ctx.lineTo(cx+42-6-s*1.3,cy+s);ctx.fill();ctx.fillStyle='rgba(255,255,255,0.5)';ctx.font='10px sans-serif';ctx.textAlign='center';ctx.fillText(lb,cx,cy+42+15)}
+  dpad(LOGICAL_W/4,LOGICAL_H*0.67,'一二');dpad(LOGICAL_W*3/4,LOGICAL_H*0.67,'布布');
 }
 
-// ============================================================
-// MAIN GAME CLASS
-// ============================================================
+// ═══════════════════════════════════════════
+// GAME
+// ═══════════════════════════════════════════
 class Game{
   constructor(){
-    this.state='MENU';this.lvlIdx=0;this.maxLvl=0;this.map=null;this.players=[];
-    this.camera=null;this.input=new InputHandler();this.audio=new AudioEngine();
-    this.particles=[];this.time=0;this.deathT=0;this.completeT=0;this._btns=[];
-    try{const s=localStorage.getItem('bbyier_lvl');if(s)this.maxLvl=parseInt(s)||0}catch(e){}
-    this._loadLvl(0);
-    this.camera=new Camera(LOGICAL_W,LOGICAL_H,this.map.pixelW,this.map.pixelH);
+    this.state='MENU';this.lvlIdx=0;this.maxLvl=0;this.map=null;this.players=[];this.camera=null;this.input=new Input();this.audio=new AudioEngine();this.particles=[];this.time=0;this.deathT=0;this.completeT=0;this._btns=[];
+    try{const s=localStorage.getItem('bby_lvl2');if(s)this.maxLvl=parseInt(s)||0}catch(e){}
+    this._loadLvl(0);this.camera=new Camera(LOGICAL_W,LOGICAL_H,this.map.pixelW,this.map.pixelH);
     canvas.addEventListener('click',e=>{this.audio.init();const r=canvas.getBoundingClientRect();this._click((e.clientX-r.left)*(LOGICAL_W/r.width),(e.clientY-r.top)*(LOGICAL_H/r.height))});
     canvas.addEventListener('touchend',e=>{const r=canvas.getBoundingClientRect();for(const t of e.changedTouches)this._click((t.clientX-r.left)*(LOGICAL_W/r.width),(t.clientY-r.top)*(LOGICAL_H/r.height))});
-    this._lt=performance.now();
-    requestAnimationFrame(t=>this._loop(t));
+    this._lt=performance.now();requestAnimationFrame(t=>this._loop(t));
   }
-
-  _loadLvl(i){
-    this.lvlIdx=i;const ld=LEVELS[i];
-    this.map=new GameMap(ld);
-    this.players=[new Player('一二','water',this.map.spawnY.x,this.map.spawnY.y),new Player('布布','fire',this.map.spawnB.x,this.map.spawnB.y)];
-    if(this.camera){this.camera.mapW=this.map.pixelW;this.camera.mapH=this.map.pixelH}
-    this.particles=[];this.deathT=0;this.completeT=0;
-  }
-
-  _isSolid(t){
-    if(t===1)return true;return false;
-  }
-
-  _click(mx,my){
-    this.audio.init();
-    for(const b of this._btns){
-      if(mx>=b.x&&mx<=b.x+b.w&&my>=b.y&&my<=b.y+b.h){
-        this.audio.menu();
-        if(b.act==='start'){this.state='PLAYING';this._loadLvl(this.lvlIdx)}
-        else if(b.act==='levels')this.state='LEVELS';
-        else if(b.act==='load'){this.state='PLAYING';this._loadLvl(b.lvl)}
-        else if(b.act==='menu')this.state='MENU';
-      }
-    }
-  }
-
-  _loop(timestamp){
-    let dt=(timestamp-this._lt)/16.667;if(isNaN(dt)||dt<=0||dt>3)dt=1;this._lt=timestamp;this.time+=dt;
-    // Keyboard: Pause / Restart (check BEFORE clearing justPressed)
+  _loadLvl(i){this.lvlIdx=i;this.map=new GameMap(LEVELS[i]);this.players=[new Player('一二','water',this.map.spawnY.x,this.map.spawnY.y),new Player('布布','fire',this.map.spawnB.x,this.map.spawnB.y)];if(this.camera){this.camera.mw=this.map.pixelW;this.camera.mh=this.map.pixelH}this.particles=[];this.deathT=0;this.completeT=0}
+  _click(mx,my){this.audio.init();for(const b of this._btns){if(mx>=b.x&&mx<=b.x+b.w&&my>=b.y&&my<=b.y+b.h){this.audio.click();if(b.act==='start'){this.state='PLAYING';this._loadLvl(this.lvlIdx)}else if(b.act==='levels')this.state='LEVELS';else if(b.act==='load'){this.state='PLAYING';this._loadLvl(b.lvl)}else if(b.act==='menu')this.state='MENU'}}}
+  _loop(ts){
+    let dt=(ts-this._lt)/16.667;if(isNaN(dt)||dt<=0||dt>3)dt=1;this._lt=ts;this.time+=dt;
     if(this.input.wasPressed('Escape')){if(this.state==='PLAYING')this.state='PAUSED';else if(this.state==='PAUSED')this.state='PLAYING'}
     if(this.input.wasPressed('KeyR')){if(this.state==='PLAYING'||this.state==='PAUSED'){this._loadLvl(this.lvlIdx);this.state='PLAYING'}}
-
     switch(this.state){
-      case 'PLAYING':
-        this._update(dt);break;
-      case 'DEAD':
-        this.deathT-=dt;if(this.deathT<=0){this._loadLvl(this.lvlIdx);this.state='PLAYING'}
-        this.particles.forEach(p=>p.update());this.particles=this.particles.filter(p=>p.alive);break;
-      case 'LVLCOMPLETE':
-        this.completeT-=dt;
-        if(this.completeT<=0){
-          if(this.lvlIdx<LEVELS.length-1){this.lvlIdx++;if(this.lvlIdx>this.maxLvl){this.maxLvl=this.lvlIdx;try{localStorage.setItem('bbyier_lvl',this.maxLvl)}catch(e){}}this._loadLvl(this.lvlIdx);this.state='PLAYING'}
-          else{this.state='WIN';this.maxLvl=LEVELS.length-1;try{localStorage.setItem('bbyier_lvl',this.maxLvl)}catch(e){}}
-        }
-        this.particles.forEach(p=>p.update());this.particles=this.particles.filter(p=>p.alive);break;
+      case'PLAYING':this._update(dt);break;
+      case'DEAD':this.deathT-=dt;if(this.deathT<=0){this._loadLvl(this.lvlIdx);this.state='PLAYING'}this.particles.forEach(p=>p.update());this.particles=this.particles.filter(p=>p.alive());break;
+      case'LVLCOMPLETE':this.completeT-=dt;if(this.completeT<=0){if(this.lvlIdx<LEVELS.length-1){this.lvlIdx++;if(this.lvlIdx>this.maxLvl){this.maxLvl=this.lvlIdx;try{localStorage.setItem('bby_lvl2',this.maxLvl)}catch(e){}}this._loadLvl(this.lvlIdx);this.state='PLAYING'}else{this.state='WIN';this.maxLvl=LEVELS.length-1;try{localStorage.setItem('bby_lvl2',this.maxLvl)}catch(e){}}}this.particles.forEach(p=>p.update());this.particles=this.particles.filter(p=>p.alive());break;
     }
-    this._render();
-    this.input.endFrame(); // ★ Clear justPressed at END of frame, after all updates consumed them
+    this._render();this.input.endFrame();
     requestAnimationFrame(t=>this._loop(t));
   }
-
   _update(dt){
     this.map.update(this.time,this.players);
     for(const p of this.players)p.update(this.input,this.particles);
-    this.particles.forEach(p=>p.update());this.particles=this.particles.filter(p=>p.alive);
-    if(this.particles.length>150)this.particles.splice(0,this.particles.length-150);
-    // Death check
-    let dead=false;
-    for(const p of this.players)if(!p.alive){dead=true;break}
+    this.particles.forEach(p=>p.update());this.particles=this.particles.filter(p=>p.alive());if(this.particles.length>150)this.particles.splice(0,this.particles.length-150);
+    let dead=false;for(const p of this.players)if(!p.alive){dead=true;break}
     if(dead){this.audio.die();this.deathT=45;this.state='DEAD';return}
-    // Complete check
-    if(this.players[0].atDoor&&this.players[1].atDoor){
-      for(const d of this.map.doors)if(d.active)spawnP(this.particles,d.x+d.w/2,d.y+d.h/2,25,d.type==='yier'?'#aaddff':'#ffaa66',4,30,2.5);
-      this.audio.complete();this.completeT=90;this.state='LVLCOMPLETE';
-    }
+    if(this.players[0].atDoor&&this.players[1].atDoor){for(const d of this.map.doors)if(d.active)sp(this.particles,d.x+d.w/2,d.y+d.h/2,30,d.type==='yier'?'#aaddff':'#ffaa66',4,30,2.5);this.audio.complete();this.completeT=90;this.state='LVLCOMPLETE'}
     this.camera.update(this.players);
   }
-
   _render(){
-    ctx.clearRect(0,0,LOGICAL_W,LOGICAL_H);
-    ctx.fillStyle='#1a1a2e';ctx.fillRect(0,0,LOGICAL_W,LOGICAL_H);
-    // Grid
-    ctx.strokeStyle='rgba(255,255,255,0.015)';ctx.lineWidth=0.5;
-    const gox=-(this.camera?.x||0)%TILE,goy=-(this.camera?.y||0)%TILE;
-    for(let x=gox;x<LOGICAL_W;x+=TILE){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,LOGICAL_H);ctx.stroke()}
-    for(let y=goy;y<LOGICAL_H;y+=TILE){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(LOGICAL_W,y);ctx.stroke()}
-
-    const showGame=this.map&&['PLAYING','DEAD','LVLCOMPLETE','PAUSED'].includes(this.state);
-    if(showGame){this.map.render(ctx,this.camera,this.time);}
-    // Particles
-    for(const p of this.particles){
-      const h=p.color;ctx.fillStyle=`rgba(${parseInt(h.slice(1,3),16)},${parseInt(h.slice(3,5),16)},${parseInt(h.slice(5,7),16)},${p.alpha})`;
-      ctx.beginPath();ctx.arc(p.x-this.camera.x,p.y-this.camera.y,p.size,0,Math.PI*2);ctx.fill();
-    }
-    // Players
-    if(showGame)for(const p of this.players)p.render(ctx,this.camera,this.time);
-
-    // UI
-    switch(this.state){
-      case 'MENU':drawMenu(ctx,this);break;
-      case 'LEVELS':drawLevelSelect(ctx,this);break;
-      case 'PLAYING':drawHUD(ctx,this);drawTouchCtrls(ctx,this);break;
-      case 'PAUSED':drawHUD(ctx,this);drawOverlay(ctx,this);break;
-      case 'DEAD':drawHUD(ctx,this);drawOverlay(ctx,this);break;
-      case 'LVLCOMPLETE':drawHUD(ctx,this);drawOverlay(ctx,this);break;
-      case 'WIN':drawOverlay(ctx,this);break;
-    }
+    ctx.clearRect(0,0,LOGICAL_W,LOGICAL_H);ctx.fillStyle='#1a1a2e';ctx.fillRect(0,0,LOGICAL_W,LOGICAL_H);
+    ctx.strokeStyle='rgba(255,255,255,0.012)';ctx.lineWidth=0.5;
+    const gx=-(this.camera?.x||0)%TILE,gy=-(this.camera?.y||0)%TILE;
+    for(let x=gx;x<LOGICAL_W;x+=TILE){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,LOGICAL_H);ctx.stroke()}
+    for(let y=gy;y<LOGICAL_H;y+=TILE){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(LOGICAL_W,y);ctx.stroke()}
+    const sg=this.map&&['PLAYING','DEAD','LVLCOMPLETE','PAUSED'].includes(this.state);
+    if(sg)this.map.render(ctx,this.camera,this.time);
+    for(const p of this.particles){const h=p.c;ctx.fillStyle=`rgba(${parseInt(h.slice(1,3),16)},${parseInt(h.slice(3,5),16)},${parseInt(h.slice(5,7),16)},${p.a()})`;ctx.beginPath();ctx.arc(p.x-this.camera.x,p.y-this.camera.y,p.s,0,Math.PI*2);ctx.fill()}
+    if(sg)for(const p of this.players)p.render(ctx,this.camera,this.time);
+    switch(this.state){case'MENU':drawMenu(ctx,this);break;case'LEVELS':drawLevels(ctx,this);break;case'PLAYING':drawHUD(ctx,this);drawTouch(ctx,this);break;case'PAUSED':drawHUD(ctx,this);drawOverlay(ctx,this);break;case'DEAD':drawHUD(ctx,this);drawOverlay(ctx,this);break;case'LVLCOMPLETE':drawHUD(ctx,this);drawOverlay(ctx,this);break;case'WIN':drawOverlay(ctx,this);break;}
   }
 }
 
 // ═══════════════════════════════════════════
 // BOOT
 // ═══════════════════════════════════════════
-function resize(){
-  const s=Math.min(window.innerWidth/LOGICAL_W,window.innerHeight/LOGICAL_H);
-  canvas.style.width=LOGICAL_W*s+'px';canvas.style.height=LOGICAL_H*s+'px';
-}
-window.addEventListener('resize',resize);
-window.addEventListener('orientationchange',()=>setTimeout(resize,100));
-resize();
-
+function resize(){const s=Math.min(window.innerWidth/LOGICAL_W,window.innerHeight/LOGICAL_H);canvas.style.width=LOGICAL_W*s+'px';canvas.style.height=LOGICAL_H*s+'px'}
+addEventListener('resize',resize);addEventListener('orientationchange',()=>setTimeout(resize,100));resize();
 window.G=new Game();
-console.log('🐼🐻 森林冰火人 — 布布 & 一二 — 准备好了！');
+console.log('🐼🐻 森林冰火人 — 布布 一二 — 就绪！');
 console.log('一二=WASD | 布布=方向键 | R=重启 | ESC=菜单');
 </script>
 </body>
